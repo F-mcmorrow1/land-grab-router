@@ -1,0 +1,26 @@
+{
+  "name": "land-grab-router",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Plan running routes through H3 hexagons to win the strods.uk land grab.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mapbox/vector-tile": "^3.0.0",
+    "h3-js": "^4.5.0",
+    "maplibre-gl": "^6.17.0",
+    "pbf": "^5.1.2"
+  },
+  "devDependencies": {
+    "@types/geojson": "^7946.0.16",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.7",
+    "vitest": "^4.1.12"
+  }
+}

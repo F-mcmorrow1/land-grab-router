@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Land Grab Router</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="panel">
+        <header>
+          <h1>Land Grab <em>Router</em></h1>
+          <p class="muted">Plan a run that takes the most ground, and takes it off the teams ahead of you.</p>
+        </header>
+
+        <section>
+          <h2><span class="step">1</span> Game data</h2>
+          <div class="row">
+            <label class="btn">Load JSON file<input type="file" id="file" accept=".json,application/json" hidden /></label>
+            <button id="demo" type="button">Try demo data</button>
+          </div>
+          <details>
+            <summary>Paste JSON</summary>
+            <textarea id="paste" rows="4" placeholder='{"teams": [...], "cells": [...], "activities": [...]}'></textarea>
+            <button id="paste-load" type="button">Load pasted data</button>
+          </details>
+          <details>
+            <summary>How to get your live data</summary>
+            <ol class="howto">
+              <li>Open <a href="https://strods.uk/overview" target="_blank" rel="noreferrer">strods.uk/overview</a> while signed in.</li>
+              <li>Open DevTools (<kbd>⌥⌘I</kbd>), go to the <b>Network</b> tab and type <code>land-grab</code> in the filter. Reload if nothing shows.</li>
+              <li>Right-click the request, then <b>Copy → Copy response</b>.</li>
+              <li>Paste it above. It stays in this browser and is never uploaded.</li>
+            </ol>
+            <p><a href="how-to.html">Full guide: Firefox and Safari, shortcuts, phones and troubleshooting →</a></p>
+          </details>
+          <p id="data-status" class="muted">No data loaded yet.</p>
+          <label class="field" id="team-field" hidden>Your team <select id="team"></select></label>
+          <ol id="standings" class="standings"></ol>
+        </section>
+
+        <section>
+          <h2><span class="step">2</span> Plan</h2>
+          <div class="seg" id="mode" role="group" aria-label="Planning mode">
+            <button type="button" data-mode="max">Most points</button>
+            <button type="button" data-mode="visit">Through chosen hexagons</button>
+          </div>
+          <p class="hint" id="mode-hint"></p>
+          <div class="seg small" id="tool" role="group" aria-label="Map click does">
+            <button type="button" data-tool="start">Click sets start</button>
+            <button type="button" data-tool="select">Click picks hexagons</button>
+          </div>
+          <p class="row" id="selected-row"><span id="selected-count">0 hexagons picked</span><button type="button" id="clear-selected" class="link">Clear</button></p>
+          <div class="row"><button type="button" id="locate" class="link">Start from my location</button></div>
+          <label class="field" id="budget-field">Distance budget
+            <span class="range"><input type="range" id="budget" min="2" max="30" step="0.5" value="8" /><output id="budget-out">8 km</output></span>
+          </label>
+          <label class="check"><input type="checkbox" id="closed" checked /> Finish where I start</label>
+          <div class="seg small" id="profile" role="group" aria-label="Activity">
+            <button type="button" data-profile="foot">Run / walk</button>
+            <button type="button" data-profile="bike">Ride</button>
+          </div>
+          <details id="weights">
+            <summary>Scoring</summary>
+            <label class="field">Taking a hexagon <span class="range"><input type="range" data-w="claim" min="0" max="3" step="0.25" /><output></output></span></label>
+            <label class="field">Bonus for taking it off a rival <span class="range"><input type="range" data-w="block" min="0" max="3" step="0.25" /><output></output></span></label>
+            <label class="field">Shoring up hexagons you could lose <span class="range"><input type="range" data-w="defend" min="0" max="2" step="0.25" /><output></output></span></label>
+            <label class="field">Progress on hexagons you can take next run <span class="range"><input type="range" data-w="siege" min="0" max="1" step="0.05" /><output></output></span></label>
+            <label class="check"><input type="checkbox" id="leader" /> Hit the leading teams hardest</label>
+          </details>
+          <button type="button" id="plan" class="primary">Plan route</button>
+          <p id="progress" class="muted" aria-live="polite"></p>
+        </section>
+
+        <section id="result" hidden>
+          <h2><span class="step">3</span> Your route</h2>
+          <div class="stats">
+            <div><span id="r-dist">–</span><small>distance</small></div>
+            <div><span id="r-time">–</span><small id="r-time-label">at 5:30/km</small></div>
+            <div><span id="r-points">–</span><small>points</small></div>
+          </div>
+          <ul id="breakdown" class="chips"></ul>
+          <table id="projection"></table>
+          <p id="r-note" class="muted"></p>
+          <div class="row">
+            <button type="button" id="gpx" class="primary">Download GPX</button>
+            <button type="button" id="clear-route">Clear route</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>Hexagon</h2>
+          <div id="hex-detail" class="muted">Point at the map to inspect a hexagon.</div>
+        </section>
+
+        <footer class="muted">Map © OpenStreetMap contributors · OpenFreeMap · Uber H3. Not affiliated with strods.uk.</footer>
+      </aside>
+
+      <main>
+        <div id="map"></div>
+        <div class="seg map-view" id="view" role="group" aria-label="Colour hexagons by">
+          <button type="button" data-view="teams">Teams</button>
+          <button type="button" data-view="plan">Opportunities</button>
+        </div>
+        <div id="legend" class="legend"></div>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

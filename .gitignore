@@ -1,0 +1,5 @@
+node_modules
+dist
+*.local
+# Your exported game data: keep it out of version control
+data/*.json

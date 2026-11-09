@@ -1,0 +1,573 @@
+import { cellToBoundary, cellToLatLng } from "h3-js";
+import { makeDemo } from "./data/demo";
+import { parseLandGrab } from "./data/decode";
+import { lead, replay } from "./data/replay";
+import type { Dataset, GameState } from "./data/types";
+import { toGpx } from "./gpx";
+import { haversine, MARGIN } from "./graph/graph";
+import { bboxAround, bboxContains, type BBox, type Profile } from "./graph/overpass";
+import { OUTCOME_COLOURS, PlannerMap, type HexProps } from "./map";
+import { DEFAULT_WEIGHTS, assess, projectRun, valueTable, type HexPlan, type Outcome, type Weights } from "./scoring";
+import "./style.css";
+import type { RouteMessage, WorkerRequest, WorkerResponse } from "./worker";
+
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const DATA_KEY = "lgr-data-v1";
+const SETTINGS_KEY = "lgr-settings-v1";
+/** Largest street download, metres from the start in each direction. */
+const MAX_RADIUS = 5000;
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+interface Settings {
+  mode: "max" | "visit";
+  budgetKm: number;
+  closed: boolean;
+  profile: Profile;
+  weights: Weights;
+  view: "teams" | "plan";
+}
+
+function loadSettings(): Settings {
+  const base: Settings = { mode: "max", budgetKm: 8, closed: true, profile: "foot", weights: { ...DEFAULT_WEIGHTS }, view: "teams" };
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+    return { ...base, ...saved, weights: { ...base.weights, ...saved.weights } };
+  } catch {
+    return base;
+  }
+}
+const settings = loadSettings();
+const saveSettings = () => {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    /* private mode */
+  }
+};
+
+const state = {
+  ds: null as Dataset | null,
+  game: null as GameState | null,
+  plans: new Map<string, HexPlan>(),
+  team: 0,
+  tool: "start" as "start" | "select",
+  start: null as { lat: number; lng: number } | null,
+  selected: new Set<string>(),
+  graph: null as { bbox: BBox; profile: Profile; resolution: number } | null,
+  route: null as RouteMessage | null,
+  hover: null as string | null,
+  busy: false,
+};
+
+// ---------- worker ----------
+const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+let nextId = 1;
+const waiting = new Map<number, { resolve: (r: WorkerResponse) => void; progress: (m: string) => void }>();
+worker.onmessage = (ev: MessageEvent<WorkerResponse>) => {
+  const msg = ev.data;
+  const w = waiting.get(msg.id);
+  if (!w) return;
+  if (msg.type === "progress") return w.progress(msg.message);
+  waiting.delete(msg.id);
+  w.resolve(msg);
+};
+function ask(req: WorkerRequest, progress: (m: string) => void): Promise<WorkerResponse> {
+  req.id = nextId++;
+  return new Promise((resolve) => {
+    waiting.set(req.id, { resolve, progress });
+    worker.postMessage(req);
+  });
+}
+
+// ---------- map ----------
+const pmap = new PlannerMap($("map"), [-0.1276, 51.5072]);
+
+// ---------- helpers ----------
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const swatch = (colour: string) => `<span class="swatch" style="background:${colour}"></span>`;
+const teamName = (i: number) => esc(state.ds?.teams[i]?.name ?? "Nobody");
+const teamColour = (i: number) => state.ds?.teams[i]?.colour ?? "#555";
+const when = (minutes: number) => `${DAYS[Math.min(6, Math.floor(minutes / 1440))]} ${String(Math.floor((minutes % 1440) / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+
+function setProgress(text: string, isError = false) {
+  const el = $("progress");
+  el.textContent = text;
+  el.classList.toggle("error", isError);
+}
+
+function setPressed(group: string, attr: string, value: string) {
+  $(group)
+    .querySelectorAll<HTMLButtonElement>(`button[${attr}]`)
+    .forEach((b) => b.setAttribute("aria-pressed", String(b.getAttribute(attr) === value)));
+}
+
+function strength(p: HexPlan): number {
+  switch (p.outcome) {
+    case "steal":
+    case "claim":
+      return 1;
+    case "defend":
+      return p.crossingsNeeded === 1 ? 1 : 0.6;
+    case "siege":
+      return Math.max(0.25, 0.8 / Math.max(1, (p.crossingsNeeded ?? 2) - 1));
+    case "secure":
+      return 0.6;
+  }
+}
+
+const OUTCOME_LABELS: Record<Outcome, string> = {
+  claim: "Unclaimed, yours if you cross it",
+  steal: "One crossing takes it off a rival",
+  defend: "Yours, but at risk",
+  siege: "Rival's, one more run gets you closer",
+  secure: "Yours and safe",
+};
+
+// ---------- data ----------
+function loadData(raw: unknown, persist: boolean) {
+  try {
+    const ds = parseLandGrab(raw);
+    state.ds = ds;
+    state.game = replay(ds);
+    state.team = ds.yourTeam >= 0 ? ds.yourTeam : 0;
+    state.route = null;
+    state.selected.clear();
+    if (persist) {
+      try {
+        localStorage.setItem(DATA_KEY, typeof raw === "string" ? raw : JSON.stringify(raw));
+      } catch {
+        /* too big or private mode: fine, it just won't survive a reload */
+      }
+    }
+    pmap.setResolution(ds.resolution);
+    pmap.setTeamColours(ds.teams.map((t) => t.colour));
+
+    const home = ds.regions[ds.yourRegion] ?? ds.regions[0];
+    const centre = home ? { lat: home.lat, lng: home.lng } : hexCentre(state.game);
+    const farFromPlay = !state.start || !centre || haversine(state.start.lat, state.start.lng, centre.lat, centre.lng) > 20_000;
+    if (farFromPlay && centre) setStart(centre.lat, centre.lng);
+    if (home?.bounds) pmap.fitBounds(home.bounds);
+    else if (centre) pmap.map.flyTo({ center: [centre.lng, centre.lat], zoom: 12 });
+
+    const acts = ds.activities.length;
+    $("data-status").textContent = `${ds.teams.length} teams · ${state.game.hexes.size} hexagons held · ${acts} ${acts === 1 ? "activity" : "activities"} this week`;
+    $("data-status").classList.remove("error");
+    renderTeams();
+    refreshHexes();
+    renderSelected();
+    renderRoute();
+  } catch (e) {
+    $("data-status").textContent = e instanceof Error ? e.message : String(e);
+    $("data-status").classList.add("error");
+  }
+}
+
+function hexCentre(game: GameState): { lat: number; lng: number } | null {
+  const cells = [...game.hexes.keys()].slice(0, 200);
+  if (!cells.length) return null;
+  let lat = 0;
+  let lng = 0;
+  for (const c of cells) {
+    const [a, b] = cellToLatLng(c);
+    lat += a;
+    lng += b;
+  }
+  return { lat: lat / cells.length, lng: lng / cells.length };
+}
+
+function renderTeams() {
+  const ds = state.ds;
+  const game = state.game;
+  if (!ds || !game) return;
+  const select = $<HTMLSelectElement>("team");
+  select.innerHTML = ds.teams.map((t, i) => `<option value="${i}">${esc(t.name)}${i === ds.yourTeam ? " (your team)" : ""}</option>`).join("");
+  select.value = String(state.team);
+  $("team-field").hidden = false;
+  const order = ds.teams.map((_, i) => i).sort((a, b) => game.held[b] - game.held[a]);
+  $("standings").innerHTML = order
+    .map((i) => `<li>${swatch(ds.teams[i].colour)}<span>${esc(ds.teams[i].name)}</span>${i === state.team ? '<span class="you">You</span>' : ""}<span class="n">${game.held[i]}</span></li>`)
+    .join("");
+}
+
+function refreshHexes() {
+  const game = state.game;
+  if (!game) return;
+  state.plans = valueTable(game, state.team, settings.weights);
+  const hexes: HexProps[] = [];
+  game.hexes.forEach((h) => {
+    const p = state.plans.get(h.cell)!;
+    hexes.push({ cell: h.cell, team: h.holder, opacity: 0.28 + 0.2 * Math.min(lead(h), 3), outcome: p.outcome, strength: strength(p) });
+  });
+  pmap.setHexes(hexes);
+  renderLegend();
+  renderHex(state.hover);
+}
+
+function renderLegend() {
+  const el = $("legend");
+  if (!state.ds) {
+    el.innerHTML = "";
+    return;
+  }
+  if (settings.view === "teams") {
+    el.innerHTML = state.ds.teams.map((t) => `<div>${swatch(t.colour)}${esc(t.name)}</div>`).join("");
+  } else {
+    const keys: Outcome[] = ["steal", "defend", "siege", "secure"];
+    el.innerHTML =
+      keys.map((k) => `<div>${swatch(OUTCOME_COLOURS[k])}${OUTCOME_LABELS[k]}</div>`).join("") +
+      `<div class="muted">Blank ground is unclaimed and worth taking too</div>`;
+  }
+}
+
+function renderHex(cell: string | null) {
+  const el = $("hex-detail");
+  if (!cell || !state.game || !state.ds) {
+    el.innerHTML = state.ds ? "Point at the map to inspect a hexagon." : "Load game data to inspect hexagons.";
+    return;
+  }
+  const p = assess(state.game, state.team, cell, settings.weights);
+  const h = state.game.hexes.get(cell);
+  const picked = state.selected.has(cell) ? " · picked" : "";
+  if (!h) {
+    el.innerHTML = `<b>Unclaimed</b>${picked}<p class="muted">Nobody has crossed it this week. Crossing it takes it: <b>${p.value.toFixed(2)}</b> points.</p>`;
+    return;
+  }
+  const visits = h.visits
+    .map((v, t) => (v ? `<li><span>${swatch(teamColour(t))} ${teamName(t)}</span><span>${v} ${v === 1 ? "crossing" : "crossings"}</span></li>` : ""))
+    .join("");
+  const detail =
+    p.outcome === "siege"
+      ? `You need ${p.crossingsNeeded} crossings to take it.`
+      : p.outcome === "defend"
+        ? `A rival needs ${p.crossingsNeeded} ${p.crossingsNeeded === 1 ? "crossing" : "crossings"} to take it.`
+        : "";
+  el.innerHTML = `<div>${swatch(teamColour(h.holder))} Held by <b>${teamName(h.holder)}</b>${picked}</div>
+    <ul>${visits}</ul>
+    <div class="muted">Last crossed ${when(h.lastCrossedAt)}</div>
+    <p><span class="swatch" style="background:${OUTCOME_COLOURS[p.outcome]}"></span> ${OUTCOME_LABELS[p.outcome]}. ${detail} Worth <b>${p.value.toFixed(2)}</b> points on your next run.</p>`;
+}
+
+// ---------- start / selection ----------
+function setStart(lat: number, lng: number) {
+  state.start = { lat, lng };
+  pmap.setStart(lat, lng);
+}
+pmap.onStartDragged((lat, lng) => setStart(lat, lng));
+
+function renderSelected() {
+  pmap.setSelected(state.selected);
+  const n = state.selected.size;
+  $("selected-count").textContent = `${n} ${n === 1 ? "hexagon" : "hexagons"} picked`;
+}
+
+pmap.map.on("click", (e) => {
+  if (settings.mode === "visit" && state.tool === "select") {
+    const cell = pmap.cellAt(e.lngLat.lat, e.lngLat.lng);
+    if (state.selected.has(cell)) state.selected.delete(cell);
+    else state.selected.add(cell);
+    renderSelected();
+    renderHex(cell);
+  } else {
+    setStart(e.lngLat.lat, e.lngLat.lng);
+  }
+});
+
+pmap.map.on("mousemove", (e) => {
+  if (pmap.map.getZoom() < 9) return;
+  const cell = pmap.cellAt(e.lngLat.lat, e.lngLat.lng);
+  if (cell === state.hover) return;
+  state.hover = cell;
+  pmap.setHover(cell);
+  renderHex(cell);
+});
+pmap.map.getCanvas().addEventListener("mouseleave", () => {
+  state.hover = null;
+  pmap.setHover(null);
+});
+
+// ---------- planning ----------
+function bboxForVisit(): BBox {
+  const s = state.start!;
+  let b: BBox = [s.lng, s.lat, s.lng, s.lat];
+  for (const c of state.selected) {
+    for (const [lng, lat] of cellToBoundary(c, true)) b = [Math.min(b[0], lng), Math.min(b[1], lat), Math.max(b[2], lng), Math.max(b[3], lat)];
+  }
+  const pad = bboxAround((b[1] + b[3]) / 2, (b[0] + b[2]) / 2, 700);
+  const dLng = (pad[2] - pad[0]) / 2;
+  const dLat = (pad[3] - pad[1]) / 2;
+  return [b[0] - dLng, b[1] - dLat, b[2] + dLng, b[3] + dLat];
+}
+
+function areaKm2(b: BBox) {
+  const mid = (b[1] + b[3]) / 2;
+  return (haversine(mid, b[0], mid, b[2]) * haversine(b[1], b[0], b[3], b[0])) / 1e6;
+}
+
+async function plan() {
+  if (state.busy) return;
+  const ds = state.ds;
+  if (!ds || !state.game) return setProgress("Load game data first, or try the demo.", true);
+  if (!state.start) return setProgress("Click the map to set a start point.", true);
+  const start = state.start;
+  const budget = settings.budgetKm * 1000;
+  let need: BBox;
+  let note = "";
+  if (settings.mode === "max") {
+    const wanted = budget * (settings.closed ? 0.42 : 0.8);
+    const radius = Math.min(wanted, MAX_RADIUS);
+    if (radius < wanted) note = `Searched streets within ${MAX_RADIUS / 1000} km of the start.`;
+    need = bboxAround(start.lat, start.lng, radius);
+  } else {
+    if (!state.selected.size) return setProgress("Pick at least one hexagon on the map.", true);
+    need = bboxForVisit();
+    if (areaKm2(need) > 160) return setProgress(`Those hexagons span ${Math.round(areaKm2(need))} km². Pick ones closer together (under about 160 km²).`, true);
+  }
+
+  state.busy = true;
+  $<HTMLButtonElement>("plan").disabled = true;
+  try {
+    const g = state.graph;
+    if (!g || g.profile !== settings.profile || g.resolution !== ds.resolution || !bboxContains(g.bbox, need)) {
+      const res = await ask({ id: 0, type: "load", bbox: need, profile: settings.profile, resolution: ds.resolution }, setProgress);
+      if (res.type === "error") throw new Error(res.message);
+      if (res.type !== "loaded") throw new Error("Unexpected reply from the planner.");
+      if (res.nodes === 0) throw new Error("No streets or paths found around the start point.");
+      state.graph = { bbox: res.bbox, profile: settings.profile, resolution: ds.resolution };
+    }
+    const req: WorkerRequest =
+      settings.mode === "max"
+        ? {
+            id: 0,
+            type: "maxScore",
+            start,
+            budget,
+            closed: settings.closed,
+            known: [...state.plans].map(([c, p]) => [c, p.value]),
+            unclaimed: settings.weights.claim,
+          }
+        : { id: 0, type: "visitAll", start, targets: [...state.selected], closed: settings.closed };
+    const res = await ask(req, setProgress);
+    if (res.type === "error") throw new Error(res.message);
+    if (res.type !== "route") throw new Error("Unexpected reply from the planner.");
+    state.route = res.route;
+    $("r-note").dataset.note = note;
+    renderRoute();
+    pmap.fitCoords(res.route.coords);
+    setProgress("");
+  } catch (e) {
+    setProgress(e instanceof Error ? e.message : String(e), true);
+  } finally {
+    state.busy = false;
+    $<HTMLButtonElement>("plan").disabled = false;
+  }
+}
+
+function renderRoute() {
+  const r = state.route;
+  const game = state.game;
+  const ds = state.ds;
+  if (!r || !game || !ds) {
+    $("result").hidden = true;
+    pmap.setRoute(null);
+    return;
+  }
+  $("result").hidden = false;
+  pmap.setRoute(r.coords, r.cells);
+  const proj = projectRun(game, state.team, r.cells, settings.weights);
+  const km = r.length / 1000;
+  $("r-dist").textContent = `${km.toFixed(km < 10 ? 2 : 1)} km`;
+  const minutes = settings.profile === "bike" ? (km / 20) * 60 : km * 5.5;
+  $("r-time").textContent = minutes >= 60 ? `${Math.floor(minutes / 60)}h ${String(Math.round(minutes % 60)).padStart(2, "0")}` : `${Math.round(minutes)} min`;
+  $("r-time-label").textContent = settings.profile === "bike" ? "at 20 km/h" : "at 5:30/km";
+  $("r-points").textContent = proj.points.toFixed(1);
+
+  const chips: [Outcome, string][] = [
+    ["claim", "unclaimed taken"],
+    ["steal", "taken from rivals"],
+    ["defend", "shored up"],
+    ["siege", "closer to taking"],
+    ["secure", "already safe"],
+  ];
+  $("breakdown").innerHTML = chips
+    .filter(([k]) => proj.counts[k] > 0)
+    .map(([k, label]) => `<li>${swatch(OUTCOME_COLOURS[k])}<b>${proj.counts[k]}</b> ${label}</li>`)
+    .join("");
+
+  const order = ds.teams.map((_, i) => i).sort((a, b) => proj.heldAfter[b] - proj.heldAfter[a]);
+  $("projection").innerHTML =
+    `<tr><td class="muted">Hexagons held</td><td class="muted">now</td><td class="muted">after</td></tr>` +
+    order
+      .map((i) => {
+        const d = proj.heldAfter[i] - proj.heldBefore[i];
+        const delta = d ? ` <span class="${d > 0 ? "up" : "down"}">${d > 0 ? "+" : ""}${d}</span>` : "";
+        return `<tr><td>${swatch(ds.teams[i].colour)} ${esc(ds.teams[i].name)}${i === state.team ? ' <span class="you">You</span>' : ""}</td><td>${proj.heldBefore[i]}</td><td>${proj.heldAfter[i]}${delta}</td></tr>`;
+      })
+      .join("");
+
+  const notes: string[] = [];
+  if ($("r-note").dataset.note) notes.push($("r-note").dataset.note!);
+  if (settings.mode === "visit") {
+    const covered = new Set(r.cells);
+    const missed = [...state.selected].filter((c) => !covered.has(c));
+    const shallow = missed.length - r.unreachable.length;
+    if (r.unreachable.length) notes.push(`${r.unreachable.length} picked ${r.unreachable.length === 1 ? "hexagon has" : "hexagons have"} no streets or paths the route can use.`);
+    if (shallow > 0) notes.push(`${shallow} picked ${shallow === 1 ? "hexagon is" : "hexagons are"} only reachable near the edge, so GPS may not register ${shallow === 1 ? "it" : "them"}.`);
+    if (!missed.length) notes.push(`Passes through all ${state.selected.size} picked hexagons.`);
+  }
+  notes.push(`Gets at least ${MARGIN} m inside ${r.cells.length} hexagons, so GPS drift shouldn't cost you any. Each counts once per run.`);
+  $("r-note").textContent = notes.join(" ");
+}
+
+function downloadGpx() {
+  const r = state.route;
+  if (!r) return;
+  const stamp = new Date().toISOString().slice(0, 10);
+  const blob = new Blob([toGpx(r.coords, `Land grab route ${stamp}`)], { type: "application/gpx+xml" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `land-grab-route-${stamp}.gpx`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ---------- controls ----------
+function applyMode() {
+  setPressed("mode", "data-mode", settings.mode);
+  const visit = settings.mode === "visit";
+  if (!visit) state.tool = "start";
+  else if (state.tool === "start" && state.selected.size === 0) state.tool = "select";
+  setPressed("tool", "data-tool", state.tool);
+  $("tool").hidden = !visit;
+  $("selected-row").hidden = !visit;
+  $("budget-field").hidden = visit;
+  $("mode-hint").textContent = visit
+    ? "Click hexagons on the map to pick them. The planner finds the shortest street route that enters every one."
+    : "Finds the route that wins the most points within your distance. Blank, unclaimed ground counts too.";
+  pmap.map.getCanvas().style.cursor = visit && state.tool === "select" ? "pointer" : "crosshair";
+}
+
+$("mode").addEventListener("click", (e) => {
+  const m = (e.target as HTMLElement).closest("button")?.dataset.mode as Settings["mode"] | undefined;
+  if (!m) return;
+  settings.mode = m;
+  saveSettings();
+  applyMode();
+});
+$("tool").addEventListener("click", (e) => {
+  const t = (e.target as HTMLElement).closest("button")?.dataset.tool as "start" | "select" | undefined;
+  if (!t) return;
+  state.tool = t;
+  applyMode();
+});
+$("view").addEventListener("click", (e) => {
+  const v = (e.target as HTMLElement).closest("button")?.dataset.view as Settings["view"] | undefined;
+  if (!v) return;
+  settings.view = v;
+  saveSettings();
+  setPressed("view", "data-view", v);
+  pmap.setView(v);
+  renderLegend();
+});
+$("profile").addEventListener("click", (e) => {
+  const p = (e.target as HTMLElement).closest("button")?.dataset.profile as Profile | undefined;
+  if (!p) return;
+  settings.profile = p;
+  saveSettings();
+  setPressed("profile", "data-profile", p);
+});
+
+const budget = $<HTMLInputElement>("budget");
+budget.value = String(settings.budgetKm);
+$("budget-out").textContent = `${settings.budgetKm} km`;
+budget.addEventListener("input", () => {
+  settings.budgetKm = parseFloat(budget.value);
+  $("budget-out").textContent = `${settings.budgetKm} km`;
+  saveSettings();
+});
+
+const closed = $<HTMLInputElement>("closed");
+closed.checked = settings.closed;
+closed.addEventListener("change", () => {
+  settings.closed = closed.checked;
+  saveSettings();
+});
+
+document.querySelectorAll<HTMLInputElement>("#weights input[data-w]").forEach((input) => {
+  const key = input.dataset.w as "claim" | "block" | "defend" | "siege";
+  const out = input.nextElementSibling as HTMLOutputElement;
+  input.value = String(settings.weights[key]);
+  out.textContent = settings.weights[key].toFixed(2);
+  input.addEventListener("input", () => {
+    settings.weights[key] = parseFloat(input.value);
+    out.textContent = settings.weights[key].toFixed(2);
+    saveSettings();
+    refreshHexes();
+    renderRoute();
+  });
+});
+const leader = $<HTMLInputElement>("leader");
+leader.checked = settings.weights.leaderFocus;
+leader.addEventListener("change", () => {
+  settings.weights.leaderFocus = leader.checked;
+  saveSettings();
+  refreshHexes();
+  renderRoute();
+});
+
+$<HTMLSelectElement>("team").addEventListener("change", (e) => {
+  state.team = parseInt((e.target as HTMLSelectElement).value, 10);
+  renderTeams();
+  refreshHexes();
+  renderRoute();
+});
+
+$<HTMLInputElement>("file").addEventListener("change", async (e) => {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (file) loadData(await file.text(), true);
+  (e.target as HTMLInputElement).value = "";
+});
+$("paste-load").addEventListener("click", () => {
+  const text = $<HTMLTextAreaElement>("paste").value.trim();
+  if (text) loadData(text, true);
+});
+$("demo").addEventListener("click", () => {
+  const c = state.start ?? pmap.map.getCenter();
+  state.start = null;
+  loadData(makeDemo({ lat: c.lat, lng: c.lng }), true);
+});
+$("clear-selected").addEventListener("click", () => {
+  state.selected.clear();
+  renderSelected();
+});
+$("locate").addEventListener("click", () => {
+  if (!navigator.geolocation) return setProgress("Your browser can't share its location.", true);
+  setProgress("Finding you…");
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      setStart(pos.coords.latitude, pos.coords.longitude);
+      pmap.map.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: 13 });
+      setProgress("");
+    },
+    (err) => setProgress(`Couldn't get your location: ${err.message}`, true),
+  );
+});
+$("plan").addEventListener("click", plan);
+$("gpx").addEventListener("click", downloadGpx);
+$("clear-route").addEventListener("click", () => {
+  state.route = null;
+  renderRoute();
+});
+
+// ---------- start up ----------
+setPressed("view", "data-view", settings.view);
+setPressed("profile", "data-profile", settings.profile);
+applyMode();
+pmap.setView(settings.view);
+let saved: string | null = null;
+try {
+  saved = localStorage.getItem(DATA_KEY);
+} catch {
+  /* ignore */
+}
+if (saved) loadData(saved, false);
+else renderHex(null);

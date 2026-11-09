@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Getting Your Data · Land Grab Router</title>
+    <meta name="description" content="How to copy your strods.uk land-grab data from the browser's Network tab into Land Grab Router." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #111112;
+        --panel: #18191a;
+        --raised: #222320;
+        --line: #2c2d29;
+        --ink: #f4f4ed;
+        --muted: #9a9c8f;
+        --accent: #d2ff00;
+        --route: #38f2ff;
+        --warn: #ffb020;
+        --danger: #ff5c8a;
+        color-scheme: dark;
+      }
+      * { box-sizing: border-box; }
+      html { scroll-padding-top: 20px; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .wrap { max-width: 780px; margin: 0 auto; padding: 40px 16px 80px; }
+      a { color: var(--route); }
+      h1 { font: 400 clamp(38px, 7vw, 56px)/1.02 "Instrument Serif", Georgia, serif; margin: 10px 0 14px; }
+      h1 em { color: var(--accent); }
+      h2 { font: 400 32px/1.15 "Instrument Serif", Georgia, serif; margin: 56px 0 12px; }
+      h3 { font-size: 16px; margin: 28px 0 8px; }
+      .lede { font-size: 18px; color: var(--muted); max-width: 62ch; }
+      .back { font-size: 14px; }
+      code, kbd {
+        font: 0.86em ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 1px 5px;
+        white-space: nowrap;
+      }
+      kbd { border-bottom-width: 2px; }
+      pre {
+        background: #0b0b0c;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 16px;
+        overflow-x: auto;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      pre code { background: none; border: none; padding: 0; white-space: pre; }
+      .toc {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px 20px;
+        margin: 28px 0;
+      }
+      .toc ol { margin: 6px 0 0; padding-left: 20px; columns: 2 220px; }
+      .toc li { margin: 2px 0; }
+      .steps { counter-reset: step; list-style: none; padding: 0; margin: 16px 0; }
+      .steps > li {
+        counter-increment: step;
+        position: relative;
+        padding: 0 0 18px 46px;
+        border-left: 1px solid var(--line);
+        margin-left: 14px;
+      }
+      .steps > li:last-child { border-left-color: transparent; }
+      .steps > li::before {
+        content: counter(step);
+        position: absolute;
+        left: -15px;
+        top: 0;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--accent);
+        color: var(--bg);
+        font-weight: 700;
+        display: grid;
+        place-items: center;
+        font-size: 14px;
+      }
+      .steps > li > b:first-child { display: block; margin-bottom: 2px; }
+      .note, .warn {
+        border-radius: 10px;
+        padding: 12px 16px;
+        margin: 18px 0;
+        border: 1px solid var(--line);
+        background: var(--panel);
+      }
+      .note { border-left: 3px solid var(--route); }
+      .warn { border-left: 3px solid var(--warn); }
+      .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 18px 0 0; }
+      .tabs button {
+        font: inherit;
+        font-size: 14px;
+        color: var(--muted);
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+      .tabs button[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+      .panel[hidden] { display: none; }
+      table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 15px; }
+      th, td { text-align: left; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--muted); font-weight: 500; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+      .table-scroll { overflow-x: auto; }
+      details {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 16px;
+        margin: 10px 0;
+      }
+      summary { cursor: pointer; font-weight: 600; }
+      details[open] summary { margin-bottom: 6px; }
+
+      /* Simplified DevTools mock */
+      figure { margin: 24px 0; }
+      figcaption { color: var(--muted); font-size: 14px; margin-top: 8px; }
+      .devtools {
+        border: 1px solid #3a3b37;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #202124;
+        font: 12.5px/1.4 system-ui, sans-serif;
+        color: #e8eaed;
+        position: relative;
+      }
+      .dt-bar { display: flex; gap: 2px; background: #292a2d; border-bottom: 1px solid #3c4043; padding: 0 8px; overflow: hidden; }
+      .dt-bar span { padding: 7px 10px; color: #9aa0a6; white-space: nowrap; }
+      .dt-bar .on { color: #e8eaed; box-shadow: inset 0 -2px 0 #8ab4f8; }
+      .dt-filter { display: flex; gap: 8px; align-items: center; padding: 6px 10px 6px 38px; border-bottom: 1px solid #3c4043; flex-wrap: wrap; }
+      .dt-input { background: #171717; border: 1px solid #5f6368; border-radius: 4px; padding: 3px 8px; min-width: 150px; color: #e8eaed; }
+      .dt-chip { padding: 2px 8px; border-radius: 10px; color: #9aa0a6; }
+      .dt-chip.on { background: #394457; color: #e8eaed; }
+      .dt-table { width: 100%; border-collapse: collapse; margin: 0; font-size: 12.5px; }
+      .dt-table th, .dt-table td { padding: 4px 10px; border-bottom: 1px solid #303134; color: #bdc1c6; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12.5px; white-space: nowrap; }
+      .dt-table th { color: #9aa0a6; background: #292a2d; }
+      .dt-table th:first-child, .dt-table td:first-child { padding-left: 38px; }
+      .dt-table tr.hit td { background: #0c3a5e; color: #fff; }
+      .dt-menu {
+        position: absolute;
+        right: 14px;
+        top: 98px;
+        background: #2d2e31;
+        border: 1px solid #5f6368;
+        border-radius: 6px;
+        padding: 4px 0;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        min-width: 170px;
+      }
+      .dt-menu div { padding: 4px 14px; color: #e8eaed; }
+      .dt-menu .sel { background: #394457; }
+      .dt-menu hr { border: none; border-top: 1px solid #5f6368; margin: 4px 0; }
+      .callout {
+        position: absolute;
+        background: var(--accent);
+        color: var(--bg);
+        font-weight: 700;
+        font-size: 12px;
+        border-radius: 50%;
+        width: 22px;
+        height: 22px;
+        display: grid;
+        place-items: center;
+        box-shadow: 0 0 0 3px var(--bg);
+      }
+      .legend-list { list-style: none; padding: 0; margin: 10px 0 0; font-size: 14px; color: var(--muted); }
+      .legend-list li { display: flex; gap: 8px; align-items: baseline; margin: 3px 0; }
+      .legend-list .n { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--bg); font-size: 11px; flex: none; }
+      footer { margin-top: 64px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 16px; }
+      @media (max-width: 600px) {
+        .dt-menu { right: 8px; top: 120px; min-width: 150px; }
+        .steps > li { padding-left: 36px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <a class="back" href="./">← Back to Land Grab Router</a>
+      <h1>Getting your <em>land-grab</em> data</h1>
+      <p class="lede">
+        The planner needs the same data the strods.uk map is drawn from. Your browser already downloads it whenever you open the
+        overview page; this guide shows how to find that download in the developer tools and copy it across. It takes about a minute
+        once you've done it before.
+      </p>
+
+      <nav class="toc" aria-label="Contents">
+        <b>Contents</b>
+        <ol>
+          <li><a href="#before">Before you start</a></li>
+          <li><a href="#what">What you're looking for</a></li>
+          <li><a href="#steps">Step by step</a></li>
+          <li><a href="#check">Check you've got the right thing</a></li>
+          <li><a href="#load">Load it into the planner</a></li>
+          <li><a href="#shortcuts">Shortcuts for next time</a></li>
+          <li><a href="#phone">Using the planner on a phone</a></li>
+          <li><a href="#fresh">Keeping it fresh</a></li>
+          <li><a href="#trouble">Troubleshooting</a></li>
+          <li><a href="#privacy">Privacy</a></li>
+        </ol>
+      </nav>
+
+      <h2 id="before">Before you start</h2>
+      <ul>
+        <li><b>A desktop browser.</b> Chrome, Edge, Brave, Arc, Firefox or Safari on a Mac or PC. Phone browsers don't have developer tools; see <a href="#phone">using a phone</a> for the workaround.</li>
+        <li><b>You're signed in to strods.uk.</b> The data comes from your account, so a signed-out browser gets nothing.</li>
+        <li><b>The land grab is running.</b> The map ("The map who holds what") only appears on the overview page while the land-grab challenge is live. If you can't see the map there, there's no data to copy.</li>
+      </ul>
+
+      <h2 id="what">What you're looking for</h2>
+      <p>When the map section of <a href="https://strods.uk/overview" target="_blank" rel="noreferrer">strods.uk/overview</a> loads, the page fetches one request:</p>
+      <pre><code>GET https://api.strods.uk/clubs/<span style="color:var(--accent)">{your club id}</span>/land-grab</code></pre>
+      <p>
+        The reply is JSON: every team, every hexagon crossed this week, and every activity that crossed them. The page asks for it again
+        every five minutes while it stays open. The Network tab in the developer tools lists every request a page makes, so the job is to
+        find that one and copy its reply.
+      </p>
+
+      <figure>
+        <div class="devtools" role="img" aria-label="Simplified Chrome DevTools Network tab with the land-grab request selected and its right-click menu open on Copy response">
+          <div class="dt-bar"><span>Elements</span><span>Console</span><span>Sources</span><span class="on">Network</span><span>Performance</span><span>Application</span></div>
+          <div class="dt-filter">
+            <span class="dt-input">land-grab</span>
+            <span class="dt-chip">All</span><span class="dt-chip on">Fetch/XHR</span><span class="dt-chip">Doc</span><span class="dt-chip">JS</span>
+          </div>
+          <div class="table-scroll">
+            <table class="dt-table">
+              <thead><tr><th>Name</th><th>Status</th><th>Type</th><th>Size</th><th>Time</th></tr></thead>
+              <tbody>
+                <tr class="hit"><td>land-grab</td><td>200</td><td>xhr</td><td>84.2 kB</td><td>212 ms</td></tr>
+                <tr><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>
+                <tr><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>
+                <tr><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="dt-menu" aria-hidden="true">
+            <div>Open in new tab</div>
+            <hr />
+            <div class="sel">Copy ▸ Copy response</div>
+            <div>Copy ▸ Copy URL</div>
+          </div>
+          <span class="callout" style="left: 8px; top: 41px">1</span>
+          <span class="callout" style="left: 8px; top: 97px">2</span>
+          <span class="callout" style="right: 4px; top: 88px">3</span>
+        </div>
+        <figcaption>A simplified Chrome Network tab. Sizes and timings will differ.</figcaption>
+        <ul class="legend-list">
+          <li><span class="n">1</span><span>Type <code>land-grab</code> in the filter box so only that request shows.</span></li>
+          <li><span class="n">2</span><span>The request. Status should be <code>200</code>.</span></li>
+          <li><span class="n">3</span><span>Right-click it and choose <b>Copy → Copy response</b>.</span></li>
+        </ul>
+      </figure>
+
+      <h2 id="steps">Step by step</h2>
+      <div class="tabs" role="tablist" aria-label="Browser">
+        <button role="tab" aria-selected="true" aria-controls="p-chrome" id="t-chrome">Chrome, Edge, Brave, Arc</button>
+        <button role="tab" aria-selected="false" aria-controls="p-firefox" id="t-firefox">Firefox</button>
+        <button role="tab" aria-selected="false" aria-controls="p-safari" id="t-safari">Safari</button>
+      </div>
+
+      <section class="panel" role="tabpanel" id="p-chrome" aria-labelledby="t-chrome">
+        <ol class="steps">
+          <li><b>Open the overview page.</b> Go to <a href="https://strods.uk/overview" target="_blank" rel="noreferrer">strods.uk/overview</a> and scroll down until you see the map.</li>
+          <li><b>Open the developer tools.</b> Press <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>I</kbd> on a Mac, or <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>I</kbd> (or <kbd>F12</kbd>) on Windows. You can also right-click anywhere on the page and choose <b>Inspect</b>. A panel opens, docked to the side or bottom of the window.</li>
+          <li><b>Go to the Network tab.</b> It's in the row of tabs along the top of the panel. If the panel is narrow it may be tucked behind a <code>»</code> button.</li>
+          <li><b>Reload the page.</b> Press <kbd>⌘</kbd> <kbd>R</kbd> (Mac) or <kbd>Ctrl</kbd> <kbd>R</kbd> (Windows) with the developer tools still open. They only record requests made while they're open, so anything from before is missing. Scroll down to the map again so it loads.</li>
+          <li><b>Filter to the request.</b> Click the <b>Filter</b> box at the top of the Network tab and type <code>land-grab</code>. Clicking <b>Fetch/XHR</b> next to it hides images and scripts too. You should be left with one row (or a few, if the page has refreshed itself).</li>
+          <li><b>Check it's the one.</b> Click the row. The <b>Headers</b> tab should show a Request URL ending in <code>/land-grab</code> and Status Code <code>200</code>. The <b>Preview</b> tab shows the reply as a tree you can expand: <code>teams</code>, <code>cells</code>, <code>activities</code> and so on.</li>
+          <li><b>Copy the response.</b> Right-click the row in the list and choose <b>Copy → Copy response</b>. The whole reply is now on your clipboard. (Not <i>Copy as cURL</i> or <i>Copy URL</i>; those copy the request, not the data.)</li>
+          <li><b>Paste it into the planner.</b> See <a href="#load">loading it</a> below.</li>
+        </ol>
+      </section>
+
+      <section class="panel" role="tabpanel" id="p-firefox" aria-labelledby="t-firefox" hidden>
+        <ol class="steps">
+          <li><b>Open the overview page.</b> Go to <a href="https://strods.uk/overview" target="_blank" rel="noreferrer">strods.uk/overview</a> and scroll down until you see the map.</li>
+          <li><b>Open the developer tools.</b> Press <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>I</kbd> on a Mac, or <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>I</kbd> (or <kbd>F12</kbd>) on Windows, or right-click the page and choose <b>Inspect</b>.</li>
+          <li><b>Go to the Network tab</b> and reload the page (<kbd>⌘</kbd> <kbd>R</kbd> / <kbd>Ctrl</kbd> <kbd>R</kbd>) so it records from the start. Scroll to the map again.</li>
+          <li><b>Filter to the request.</b> Type <code>land-grab</code> in the <b>Filter URLs</b> box. Clicking <b>XHR</b> in the row of type buttons hides everything else.</li>
+          <li><b>Check it's the one.</b> Click the row. The side panel's <b>Headers</b> show the URL and status <code>200</code>; <b>Response</b> shows the JSON (flip the <b>Raw</b> switch to see it as plain text).</li>
+          <li><b>Copy the response.</b> Right-click the row and choose <b>Copy Value → Copy Response</b>.</li>
+          <li><b>Paste it into the planner.</b> See <a href="#load">loading it</a> below.</li>
+        </ol>
+      </section>
+
+      <section class="panel" role="tabpanel" id="p-safari" aria-labelledby="t-safari" hidden>
+        <ol class="steps">
+          <li><b>Turn on the developer tools (once).</b> In Safari, open <b>Settings → Advanced</b> and tick <b>Show features for web developers</b> (older versions call it <b>Show Develop menu in menu bar</b>).</li>
+          <li><b>Open the overview page.</b> Go to <a href="https://strods.uk/overview" target="_blank" rel="noreferrer">strods.uk/overview</a> and scroll down until you see the map.</li>
+          <li><b>Open Web Inspector</b> with <kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>I</kbd>, or <b>Develop → Show Web Inspector</b>.</li>
+          <li><b>Go to the Network tab</b> and reload the page (<kbd>⌘</kbd> <kbd>R</kbd>), then scroll to the map again.</li>
+          <li><b>Filter to the request.</b> Type <code>land-grab</code> in the filter box and click the request when it appears.</li>
+          <li><b>Copy the response.</b> In the details pane, switch to the response view, click into the text, then press <kbd>⌘</kbd> <kbd>A</kbd> and <kbd>⌘</kbd> <kbd>C</kbd>. Safari's labels move around between versions; what matters is copying the whole JSON body, which starts with <code>{"teams"</code>.</li>
+          <li><b>Paste it into the planner.</b> See <a href="#load">loading it</a> below.</li>
+        </ol>
+      </section>
+
+      <h2 id="check">Check you've got the right thing</h2>
+      <p>What you copied should start with <code>{"teams":[</code> and be a few tens of kilobytes or more. The planner only needs these fields; anything else is ignored.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Field</th><th>What it is</th></tr></thead>
+          <tbody>
+            <tr><td><code>teams</code></td><td>Each team's name and colour.</td></tr>
+            <tr><td><code>cells</code></td><td>Every hexagon crossed this week, as H3 IDs like <code>881f1d4887fffff</code>.</td></tr>
+            <tr><td><code>activities</code></td><td>Each run, walk or ride: the athlete's first name, their team, when it started (minutes since Monday 00:00) and which <code>cells</code> it crossed, in order.</td></tr>
+            <tr><td><code>regions</code></td><td>The named areas the site's map jumps between, with their bounds.</td></tr>
+            <tr><td><code>your_team</code>, <code>your_region</code></td><td>Which team and area are yours, so the planner can pick them by default.</td></tr>
+            <tr><td><code>today</code></td><td>Day of the week, 0 for Monday.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        The planner doesn't take the site's word for who holds what: it replays every crossing of the week with the game's rules (most
+        crossings wins, ties go to whoever got there first), so its map should match the site's exactly.
+      </p>
+
+      <h2 id="load">Load it into the planner</h2>
+      <ol class="steps">
+        <li><b>Open the planner</b> at <a href="./">the Land Grab Router home page</a>.</li>
+        <li><b>Paste.</b> Under <b>Game data</b>, open <b>Paste JSON</b>, paste into the box (<kbd>⌘</kbd> <kbd>V</kbd> / <kbd>Ctrl</kbd> <kbd>V</kbd>) and click <b>Load pasted data</b>.</li>
+        <li><b>Check the status line.</b> It should read something like <i>4 teams · 312 hexagons held · 85 activities this week</i>, the standings appear, and the map jumps to your area.</li>
+        <li><b>Check your team.</b> It's picked from <code>your_team</code>. If it's wrong (or you want to plan as another team), change it in <b>Your team</b>.</li>
+      </ol>
+      <div class="note">
+        <b>Prefer a file?</b> Paste what you copied into any plain-text editor and save it as <code>land-grab.json</code>, then use
+        <b>Load JSON file</b>. That's also the way to get data onto a phone.
+      </div>
+
+      <h2 id="shortcuts">Shortcuts for next time</h2>
+      <p>Once you know your club's ID you can skip the filtering. It's the number in the request's URL: in the Network tab, right-click the request and choose <b>Copy → Copy URL</b>, or read it from the <b>Headers</b> tab.</p>
+
+      <h3>Open the data directly</h3>
+      <p>While signed in to strods.uk, open this address in a new tab (with your club ID in place of <code>CLUB_ID</code>):</p>
+      <pre><code>https://api.strods.uk/clubs/CLUB_ID/land-grab</code></pre>
+      <p>
+        If your browser sends your strods.uk login along (most do for a link opened like this), you'll see the raw JSON. Select all,
+        copy, paste into the planner. Bookmark it to make next time two clicks. If you see an error such as "Unauthorized" instead, use
+        the Network tab method.
+      </p>
+
+      <h3>Copy it from the Console</h3>
+      <p>On a strods.uk tab, open the developer tools, switch to the <b>Console</b> tab and run:</p>
+      <pre><code>copy(await (await fetch("https://api.strods.uk/clubs/CLUB_ID/land-grab", { credentials: "include" })).text())</code></pre>
+      <p>Nothing visible happens, but the data is now on your clipboard. <code>copy()</code> works in Chrome, Edge and Firefox consoles.</p>
+      <div class="warn">
+        <b>A word on pasting into the Console.</b> Chrome may ask you to type <code>allow pasting</code> first. That's a guard against scams
+        that trick people into running code that steals their account. This line only reads the same land-grab data the page already
+        loads, but as a rule, never paste Console code you don't understand, and never from someone who's asking you to.
+      </div>
+
+      <h2 id="phone">Using the planner on a phone</h2>
+      <p>Phone browsers have no Network tab, so fetch the data on a computer and send it over:</p>
+      <ol class="steps">
+        <li><b>Copy the data</b> on your computer using any method above.</li>
+        <li><b>Save it as a file</b>: paste into a text editor and save as <code>land-grab.json</code>.</li>
+        <li><b>Send it to your phone</b> by AirDrop, email, Messages or a cloud drive.</li>
+        <li><b>Open the planner on your phone</b>, tap <b>Load JSON file</b> and pick the file.</li>
+      </ol>
+      <p>
+        The phone keeps it until you load something else, so you only need to do this when you want fresher standings. The opened-directly
+        address from the shortcuts also works in a phone browser that's signed in to strods.uk; long-press to select all and copy.
+      </p>
+
+      <h2 id="fresh">Keeping it fresh</h2>
+      <ul>
+        <li><b>It's a snapshot.</b> The planner sees the map as it was when you copied it. If others have been out since, copy it again before planning a run.</li>
+        <li><b>The site refreshes every five minutes.</b> With the overview page open, a new <code>land-grab</code> request appears in the Network tab every five minutes. The newest is at the bottom of the list.</li>
+        <li><b>The week resets on Monday.</b> Hexagons are claimed afresh each week, so last week's data plans last week's game.</li>
+      </ul>
+
+      <h2 id="trouble">Troubleshooting</h2>
+      <details>
+        <summary>No <code>land-grab</code> request appears</summary>
+        <ul>
+          <li>Reload with the developer tools open; they don't record requests from before they were opened.</li>
+          <li>Scroll down to the map. It loads only when the page reaches it.</li>
+          <li>Check the map is on the page at all. It's only shown while the land-grab challenge is live.</li>
+          <li>Check the filter row: clear any other filters, untick <b>Invert</b>, and click <b>All</b> to show every request type.</li>
+          <li>Make sure you're on <code>strods.uk/overview</code>, not another page of the site.</li>
+        </ul>
+      </details>
+      <details>
+        <summary>The status is 401 or 403, or the reply says unauthorised</summary>
+        <p>You're signed out, or your session expired. Sign in on strods.uk, reload the overview page and try again.</p>
+      </details>
+      <details>
+        <summary>"Copy response" is missing or copies nothing</summary>
+        <ul>
+          <li>Wait until the request has finished (the Status column shows <code>200</code>, not "pending").</li>
+          <li>Tick <b>Disable cache</b> at the top of the Network tab and reload, so the reply is downloaded fresh.</li>
+          <li>Make sure you right-clicked the request in the list on the left, not something in the details pane.</li>
+          <li>As a fallback, open the <b>Response</b> tab, click into the text, select all and copy.</li>
+        </ul>
+      </details>
+      <details>
+        <summary>The planner says "That doesn't look like land-grab data"</summary>
+        <ul>
+          <li>You may have copied a different request (the page also loads leaderboards, teams and more). Check the URL ends in <code>/land-grab</code>.</li>
+          <li>You may have copied the request headers or a cURL command. The data starts with <code>{"teams"</code>.</li>
+          <li>The paste may be cut short. Try saving it to a file and using <b>Load JSON file</b> instead.</li>
+        </ul>
+      </details>
+      <details>
+        <summary>My team or the standings look wrong</summary>
+        <ul>
+          <li>Pick your team in <b>Your team</b>; it defaults to whatever the data says is yours.</li>
+          <li>Copy fresh data: the standings are only as new as your copy.</li>
+          <li>If the planner's map really disagrees with the site's for the same moment, the site's rules may have changed. Please report it.</li>
+        </ul>
+      </details>
+
+      <h2 id="privacy">Privacy</h2>
+      <ul>
+        <li><b>What's in it.</b> The reply includes the first names of athletes in your club, their teams, roughly where and when they were active this week, and which activities are yours. Treat it like the club's own data.</li>
+        <li><b>Where it goes.</b> The planner runs entirely in your browser. Data you paste or load is kept in this browser's local storage for this site and never uploaded anywhere. Street maps come from OpenFreeMap; only the map area is requested, not your game data.</li>
+        <li><b>Removing it.</b> Loading other data replaces it. To remove it altogether, clear this site's data in your browser's settings.</li>
+        <li><b>Sharing.</b> Don't post the JSON publicly or commit it to a public repository. Share routes (the GPX) instead.</li>
+      </ul>
+
+      <footer>
+        Land Grab Router is an independent tool and isn't affiliated with strods.uk. Maps © OpenStreetMap contributors · OpenFreeMap.
+        <br /><a href="./">← Back to the planner</a>
+      </footer>
+    </div>
+    <script>
+      const tabs = [...document.querySelectorAll('[role="tab"]')];
+      const show = (tab) => {
+        tabs.forEach((t) => {
+          const on = t === tab;
+          t.setAttribute("aria-selected", String(on));
+          document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+        });
+        try { localStorage.setItem("lgr-howto-browser", tab.id); } catch {}
+      };
+      tabs.forEach((t) => t.addEventListener("click", () => show(t)));
+      let saved = null;
+      try { saved = localStorage.getItem("lgr-howto-browser"); } catch {}
+      const isFirefox = /firefox/i.test(navigator.userAgent);
+      const isSafari = /^((?!chrome|android|crios|fxios).)*safari/i.test(navigator.userAgent);
+      const initial = document.getElementById(saved || (isFirefox ? "t-firefox" : isSafari ? "t-safari" : "t-chrome"));
+      if (initial) show(initial);
+    </script>
+  </body>
+</html>

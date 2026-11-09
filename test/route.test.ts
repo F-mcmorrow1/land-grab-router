@@ -1,0 +1,112 @@
+import * as h3 from "h3-js";
+import { describe, expect, it } from "vitest";
+import { dijkstra, pathCells } from "../src/graph/dijkstra";
+import { haversine } from "../src/graph/graph";
+import { grid } from "./grid";
+import { maxScore } from "../src/solve/maxScore";
+import { visitAll } from "../src/solve/visitAll";
+
+describe("street graph", () => {
+  const { g, centre } = grid();
+
+  it("measures grid distances as Manhattan distances", () => {
+    const sp = dijkstra(g, 0);
+    const far = 31 * 31 - 1;
+    const expected = haversine(g.lat[0], g.lng[0], g.lat[30], g.lng[30]) + haversine(g.lat[30], g.lng[30], g.lat[far], g.lng[far]);
+    expect(sp.dist[far]).toBeCloseTo(expected, -1);
+  });
+
+  it("only counts hexagons the route gets well inside", () => {
+    // Independent check: sample each hexagon's edges finely and measure with haversine.
+    const edgeDistance = (lat: number, lng: number, cell: string) => {
+      const ring = h3.cellToBoundary(cell);
+      let best = Infinity;
+      for (let i = 0; i < ring.length; i++) {
+        const [a, b] = [ring[i], ring[(i + 1) % ring.length]];
+        for (let k = 0; k <= 200; k++) {
+          const f = k / 200;
+          best = Math.min(best, haversine(lat, lng, a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f));
+        }
+      }
+      return best;
+    };
+    let safe = 0;
+    for (let v = 0; v < g.n; v++) {
+      const d = edgeDistance(g.lat[v], g.lng[v], g.cellIds[g.cellOf[v]]);
+      if (g.safe[v]) {
+        safe++;
+        expect(d).toBeGreaterThan(15 - 0.5);
+      } else expect(d).toBeLessThan(15 + 0.5);
+    }
+    expect(safe / g.n).toBeGreaterThan(0.85);
+    expect(safe).toBeLessThan(g.n);
+  });
+
+  it("never starts on the detached island", () => {
+    expect(g.component[centre]).toBe(g.component[0]);
+    expect(g.componentSize[g.component[centre]]).toBe(31 * 31);
+  });
+});
+
+describe("visitAll", () => {
+  const { g, centre } = grid();
+  const cellNear = (r: number, c: number) => g.cellIds[g.cellOf[r * 31 + c]];
+
+  it("enters every chosen hexagon and comes home", () => {
+    const targets = [cellNear(2, 2), cellNear(2, 28), cellNear(28, 28), cellNear(28, 2), cellNear(15, 25)];
+    const r = visitAll({ g, start: centre, targets, closed: true });
+    for (const t of targets) expect(r.cells.has(g.cellIndex.get(t)!)).toBe(true);
+    expect(r.path.nodes[0]).toBe(centre);
+    expect(r.path.nodes[r.path.nodes.length - 1]).toBe(centre);
+    expect(r.unreachable).toEqual([]);
+    // Four corners of a ~3.4 km square from the middle: no sensible route is longer than ~16 km.
+    expect(r.path.length).toBeLessThan(16_000);
+  });
+
+  it("flags hexagons with no streets", () => {
+    const r = visitAll({ g, start: centre, targets: ["881f1d4887fffff"], closed: false });
+    expect(r.unreachable).toEqual(["881f1d4887fffff"]);
+  });
+});
+
+describe("maxScore", () => {
+  const { g, centre } = grid();
+
+  it("stays within budget and scores what it crosses", () => {
+    const budget = 6000;
+    const r = maxScore({ g, start: centre, budget, closed: true, value: () => 1 });
+    expect(r.path.length).toBeLessThanOrEqual(budget + 1e-6);
+    expect(r.path.nodes[0]).toBe(centre);
+    expect(r.path.nodes[r.path.nodes.length - 1]).toBe(centre);
+    expect(r.score).toBe(pathCells(g, r.path).size);
+  });
+
+  it("does at least as well as a hand-drawn square loop of the same length", () => {
+    const id = (r: number, c: number) => r * 31 + c;
+    for (const k of [3, 6, 9]) {
+      // Run north k blocks, round a square with corners k blocks out, then back.
+      const loop = [] as number[];
+      for (let r = 15; r >= 15 - k; r--) loop.push(id(r, 15));
+      for (let c = 15 - k; c <= 15 + k; c++) loop.push(id(15 - k, c));
+      for (let r = 15 - k; r <= 15 + k; r++) loop.push(id(r, 15 + k));
+      for (let c = 15 + k; c >= 15 - k; c--) loop.push(id(15 + k, c));
+      for (let r = 15 + k; r >= 15 - k; r--) loop.push(id(r, 15 - k));
+      const square = new Set(loop.filter((v) => g.safe[v]).map((v) => g.cellOf[v]));
+      const budget = 10 * k * 120;
+      const r = maxScore({ g, start: centre, budget, closed: true, value: () => 1 });
+      expect(r.score).toBeGreaterThanOrEqual(square.size);
+      expect(r.path.length).toBeLessThanOrEqual(budget + 1e-6);
+    }
+  });
+
+  it("goes out of its way for a valuable hexagon", () => {
+    const prize = g.cellOf[3 * 31 + 3]; // ~1.4 km from the centre in both directions
+    const r = maxScore({ g, start: centre, budget: 7000, closed: true, value: (c) => (c === prize ? 50 : 0.01) });
+    expect(r.cells.has(prize)).toBe(true);
+  });
+
+  it("ignores worthless hexagons", () => {
+    const r = maxScore({ g, start: centre, budget: 5000, closed: true, value: () => 0 });
+    expect(r.path.length).toBe(0);
+  });
+});
