@@ -609,6 +609,73 @@ footer {
   margin: 0 3px;
 }
 
+.route-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.route-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 4px 8px;
+  background: #1d1e1b;
+}
+
+.route-item.focused {
+  border-color: var(--ink);
+}
+
+.route-item input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.route-focus {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 0;
+}
+
+.route-focus .muted {
+  font-size: 12px;
+  width: 100%;
+  padding-left: 22px;
+}
+
+.route-swatch {
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.together {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.stepper-box output {
+  flex: 1;
+  color: var(--ink);
+  font: 600 18px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: 9px 0;
+}
+
 .mine-key {
   width: 12px;
   height: 12px;

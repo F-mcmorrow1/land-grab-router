@@ -34,10 +34,12 @@ interface Settings {
   view: "teams" | "plan";
   /** Leave hexagons you've already crossed out of new routes. */
   skipMine: SkipMine;
+  /** Routes to plan in one go (most points mode). */
+  routeCount: number;
 }
 
 function loadSettings(): Settings {
-  const base: Settings = { mode: "max", budgetKm: 8, closed: true, profile: "foot", weights: { ...DEFAULT_WEIGHTS }, view: "teams", skipMine: "week" };
+  const base: Settings = { mode: "max", budgetKm: 8, closed: true, profile: "foot", weights: { ...DEFAULT_WEIGHTS }, view: "teams", skipMine: "week", routeCount: 1 };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
     return { ...base, ...saved, weights: { ...base.weights, ...saved.weights } };
@@ -63,7 +65,13 @@ const state = {
   start: null as { lat: number; lng: number } | null,
   selected: new Set<string>(),
   graph: null as { bbox: BBox; profile: Profile; resolution: number } | null,
+  /** The route in focus: the one live location follows and the map frames. */
   route: null as RouteMessage | null,
+  /** Every route from the last plan, in the order they were planned. */
+  routes: [] as RouteMessage[],
+  /** Which of them are ticked to show (and count together). */
+  picked: new Set<number>(),
+  focus: 0,
   hover: null as string | null,
   busy: false,
   /** Hexagons you've crossed that routes are skipping (per the skipMine setting). */
@@ -75,6 +83,45 @@ const state = {
 /** The route's hexagons that count: all of them, less any you're skipping because you've crossed them. */
 function countable(cells: string[]) {
   return cells.filter((c) => !state.mine.has(c));
+}
+
+const ROUTE_COLOURS = ["#38f2ff", "#b18cff", "#ff8a3d", "#4dffb8", "#ffe14d"];
+const routeColour = (i: number) => ROUTE_COLOURS[i % ROUTE_COLOURS.length];
+
+/** The ticked routes, in plan order, with their plan numbers. */
+function shownRoutes() {
+  return state.routes.map((route, i) => ({ route, i })).filter(({ i }) => state.picked.has(i));
+}
+
+/** What the ticked routes would do between them. A hexagon counts once however many cross it. */
+function together() {
+  const shown = shownRoutes();
+  const all = [...new Set(shown.flatMap(({ route }) => route.cells))];
+  const cells = countable(all);
+  return {
+    shown,
+    all,
+    skipped: all.length - cells.length,
+    length: shown.reduce((s, { route }) => s + route.length, 0),
+    proj: state.game ? projectRun(state.game, state.team, cells, settings.weights) : null,
+  };
+}
+
+function setRoutes(routes: RouteMessage[]) {
+  state.routes = routes;
+  state.picked = new Set(routes.map((_, i) => i));
+  state.focus = 0;
+  state.route = routes[0] ?? null;
+  renderRoute();
+}
+
+function focusRoute(i: number) {
+  if (!state.routes[i]) return;
+  state.focus = i;
+  state.picked.add(i);
+  state.route = state.routes[i];
+  renderRoute();
+  pmap.fitCoords(state.route.coords, 14, fitPadding());
 }
 
 interface Fix {
@@ -148,11 +195,13 @@ function renderSheetHead() {
   const button = document.getElementById("sheet-plan") as HTMLButtonElement | null;
   if (!title || !sub || !button) return;
   const r = state.route;
-  if (r && state.game) {
-    const proj = projectRun(state.game, state.team, countable(r.cells), settings.weights);
-    const km = r.length / 1000;
+  const t = r && state.game ? together() : null;
+  if (r && t?.proj) {
+    const proj = t.proj;
+    const km = t.length / 1000;
     const taken = proj.counts.claim + proj.counts.steal;
-    title.textContent = `${km.toFixed(km < 10 ? 2 : 1)} km · ${proj.points.toFixed(1)} points`;
+    const n = t.shown.length;
+    title.textContent = `${n > 1 ? `${n} routes · ` : ""}${km.toFixed(km < 10 ? 2 : 1)} km · ${proj.points.toFixed(1)} points`;
     sub.textContent = progressText || `${taken} ${taken === 1 ? "hexagon" : "hexagons"} taken${proj.counts.steal ? `, ${proj.counts.steal} from rivals` : ""} · tap for details`;
   } else if (state.ds) {
     title.textContent = settings.mode === "max" ? `${formatKm(settings.budgetKm)} km for most points` : `Through ${state.selected.size} ${state.selected.size === 1 ? "hexagon" : "hexagons"}`;
@@ -235,6 +284,8 @@ function loadData(raw: unknown, persist: boolean) {
     // Always plan for our team, whoever is holding the data.
     state.team = verdict.team;
     state.route = null;
+    state.routes = [];
+    state.picked.clear();
     state.selected.clear();
     if (persist) {
       try {
@@ -500,16 +551,18 @@ async function plan() {
             // Hexagons you're skipping are worth nothing, so routes don't go out of their way for them.
             known: [...state.plans].map(([c, p]) => [c, state.mine.has(c) ? 0 : p.value]),
             unclaimed: settings.weights.claim,
+            count: settings.routeCount,
           }
         : { id: 0, type: "visitAll", start, targets: [...state.selected], closed: settings.closed };
     const res = await ask(req, setProgress);
     if (res.type === "error") throw new Error(res.message);
-    if (res.type !== "route") throw new Error("Unexpected reply from the planner.");
-    state.route = res.route;
-    $("r-note").dataset.note = note;
-    renderRoute();
+    const routes = res.type === "routes" ? res.routes : res.type === "route" ? [res.route] : null;
+    if (!routes?.length) throw new Error("Unexpected reply from the planner.");
+    $("r-note").dataset.note =
+      note + (settings.mode === "max" && routes.length < settings.routeCount ? ` Only ${routes.length} of ${settings.routeCount} routes found ground worth a run.` : "");
+    setRoutes(routes);
     if (sheet.active) sheet.set("peek");
-    pmap.fitCoords(res.route.coords, 14, fitPadding());
+    pmap.fitCoords(routes.flatMap((r) => r.coords), 14, fitPadding());
     setProgress("");
   } catch (e) {
     setProgress(e instanceof Error ? e.message : String(e), true);
@@ -525,18 +578,28 @@ function renderRoute() {
   const game = state.game;
   const ds = state.ds;
   renderSheetHead();
+  renderRouteList();
   if (!r || !game || !ds) {
     $("result").hidden = true;
-    pmap.setRoute(null);
+    pmap.setRoutes([], []);
+    syncLiveRoute();
     return;
   }
   $("result").hidden = false;
-  pmap.setRoute(r.coords, r.cells);
+  const t = together();
+  const proj = t.proj!;
+  const skipped = t.skipped;
+  pmap.setRoutes(
+    t.shown.map(({ route, i }) => ({ coords: route.coords, colour: routeColour(i), focused: i === state.focus })),
+    t.all,
+  );
   syncLiveRoute();
-  const counted = countable(r.cells);
-  const skipped = r.cells.length - counted.length;
-  const proj = projectRun(game, state.team, counted, settings.weights);
-  const km = r.length / 1000;
+  const many = state.routes.length > 1;
+  $("result-title").textContent = many ? "Your routes" : "Your route";
+  $("r-together").hidden = !many;
+  $("r-together").textContent =
+    t.shown.length > 1 ? `The ${t.shown.length} ticked routes together:` : `Route ${t.shown[0].i + 1} on its own:`;
+  const km = t.length / 1000;
   $("r-dist").textContent = `${km.toFixed(km < 10 ? 2 : 1)} km`;
   const minutes = settings.profile === "bike" ? (km / 20) * 60 : km * 5.5;
   $("r-time").textContent = minutes >= 60 ? `${Math.floor(minutes / 60)}h ${String(Math.round(minutes % 60)).padStart(2, "0")}` : `${Math.round(minutes)} min`;
@@ -577,22 +640,71 @@ function renderRoute() {
     if (shallow > 0) notes.push(`${shallow} picked ${shallow === 1 ? "hexagon is" : "hexagons are"} only reachable near the edge, so GPS may not register ${shallow === 1 ? "it" : "them"}.`);
     if (!missed.length) notes.push(`Passes through all ${state.selected.size} picked hexagons.`);
   }
-  notes.push(`Gets at least ${MARGIN} m inside ${r.cells.length} hexagons, so GPS drift shouldn't cost you any. Each counts once per run.`);
+  notes.push(`Gets at least ${MARGIN} m inside ${t.all.length} hexagons, so GPS drift shouldn't cost you any. Each counts once per run.`);
   if (skipped) notes.push(`${skipped} of them you've already crossed, so they're left out of the points and standings above.`);
   $("r-note").textContent = notes.join(" ");
 }
 
+/** One GPX file per ticked route: Garmin Connect imports one course per file. */
 function downloadGpx() {
-  const r = state.route;
-  if (!r) return;
+  const shown = shownRoutes();
+  if (!shown.length) return;
   const stamp = new Date().toISOString().slice(0, 10);
-  const blob = new Blob([toGpx(r.coords, `Land grab route ${stamp}`)], { type: "application/gpx+xml" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `land-grab-route-${stamp}.gpx`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  const many = state.routes.length > 1;
+  shown.forEach(({ route, i }, n) => {
+    setTimeout(() => {
+      const name = many ? `Land grab route ${i + 1} ${stamp}` : `Land grab route ${stamp}`;
+      const blob = new Blob([toGpx(route.coords, name)], { type: "application/gpx+xml" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = many ? `land-grab-route-${i + 1}-${stamp}.gpx` : `land-grab-route-${stamp}.gpx`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }, n * 400);
+  });
 }
+
+/** The list of planned routes: tick to show, tap the name to focus. */
+function renderRouteList() {
+  const list = $("route-list");
+  const game = state.game;
+  list.hidden = state.routes.length < 2 || !game;
+  if (list.hidden || !game) return;
+  list.innerHTML = state.routes
+    .map((r, i) => {
+      const own = projectRun(game, state.team, countable(r.cells), settings.weights);
+      const km = r.length / 1000;
+      const focused = i === state.focus;
+      return `<li class="route-item${focused ? " focused" : ""}">
+        <input type="checkbox" data-pick="${i}" ${state.picked.has(i) ? "checked" : ""} aria-label="Show route ${i + 1}" style="accent-color:${routeColour(i)}" />
+        <button type="button" class="route-focus" data-focus="${i}" aria-pressed="${focused}">
+          <span class="route-swatch" style="background:${routeColour(i)}"></span>
+          <b>Route ${i + 1}</b>
+          <span class="muted">${km.toFixed(km < 10 ? 2 : 1)} km · ${own.points.toFixed(1)} pts · ${r.cells.length} hexagons</span>
+        </button>
+      </li>`;
+    })
+    .join("");
+}
+
+$("route-list").addEventListener("change", (e) => {
+  const box = e.target as HTMLInputElement;
+  const i = Number(box.dataset.pick);
+  if (!Number.isInteger(i)) return;
+  if (box.checked) state.picked.add(i);
+  else if (state.picked.size > 1) state.picked.delete(i);
+  else box.checked = true; // keep at least one showing
+  if (!state.picked.has(state.focus)) {
+    // Focus moves to the first route still ticked.
+    state.focus = Math.min(...state.picked);
+    state.route = state.routes[state.focus];
+  }
+  renderRoute();
+});
+$("route-list").addEventListener("click", (e) => {
+  const button = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-focus]");
+  if (button) focusRoute(Number(button.dataset.focus));
+});
 
 // ---------- controls ----------
 function applyMode() {
@@ -604,6 +716,7 @@ function applyMode() {
   $("tool").hidden = !visit;
   $("selected-row").hidden = !visit;
   $("budget-field").hidden = visit;
+  $("count-field").hidden = visit;
   $("mode-hint").textContent = visit
     ? "Click hexagons on the map to pick them. The planner finds the shortest street route that enters every one."
     : "Finds the route that wins the most points within your distance. Blank, unclaimed ground counts too.";
@@ -664,6 +777,19 @@ $("skip").addEventListener("click", (e) => {
   renderRoute();
   if (state.route && settings.mode === "max") setProgress("Re-plan to route with this setting.");
 });
+
+// ---------- how many routes ----------
+function setRouteCount(n: number) {
+  settings.routeCount = Math.min(5, Math.max(1, Math.round(n) || 1));
+  $("count-out").textContent = String(settings.routeCount);
+  $("count-unit").textContent = settings.routeCount === 1 ? "route" : "routes";
+  $<HTMLButtonElement>("count-down").disabled = settings.routeCount <= 1;
+  $<HTMLButtonElement>("count-up").disabled = settings.routeCount >= 5;
+  saveSettings();
+}
+$("count-down").addEventListener("click", () => setRouteCount(settings.routeCount - 1));
+$("count-up").addEventListener("click", () => setRouteCount(settings.routeCount + 1));
+setRouteCount(settings.routeCount);
 
 const budget = $<HTMLInputElement>("budget");
 settings.budgetKm = clampKm(Number(settings.budgetKm) || 8);
@@ -779,10 +905,7 @@ $("locate").addEventListener("click", () => {
 $("plan").addEventListener("click", plan);
 $("sheet-plan").addEventListener("click", plan);
 $("gpx").addEventListener("click", downloadGpx);
-$("clear-route").addEventListener("click", () => {
-  state.route = null;
-  renderRoute();
-});
+$("clear-route").addEventListener("click", () => setRoutes([]));
 
 // ---------- live location ----------
 const LIVE_LABELS: Record<Outcome, string> = {

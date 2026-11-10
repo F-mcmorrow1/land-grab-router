@@ -3,7 +3,7 @@ import { buildGraph, nearestNode, type RoadGraph } from "./graph/graph";
 import { fetchOsm, type BBox, type Profile } from "./graph/overpass";
 import { fetchStreetTiles } from "./graph/tiles";
 import type { RouteResult } from "./solve/common";
-import { maxScore } from "./solve/maxScore";
+import { planRoutes } from "./solve/multi";
 import { visitAll } from "./solve/visitAll";
 
 export type WorkerRequest =
@@ -18,6 +18,8 @@ export type WorkerRequest =
       /** Points for hexagons already in play; anything else is worth `unclaimed`. */
       known: [string, number][];
       unclaimed: number;
+      /** How many routes to plan; each later one goes for hexagons the earlier ones don't. */
+      count?: number;
     };
 
 export interface LatLng {
@@ -37,6 +39,7 @@ export type WorkerResponse =
   | { id: number; type: "progress"; message: string; fraction?: number }
   | { id: number; type: "loaded"; nodes: number; segments: number; bbox: BBox }
   | { id: number; type: "route"; route: RouteMessage }
+  | { id: number; type: "routes"; routes: RouteMessage[] }
   | { id: number; type: "error"; message: string };
 
 let graph: RoadGraph | null = null;
@@ -83,8 +86,8 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       const known = new Map(req.known);
       const values = new Float64Array(g.cellIds.length);
       g.cellIds.forEach((c, i) => (values[i] = known.get(c) ?? req.unclaimed));
-      const r = maxScore({ g, start, budget: req.budget, closed: req.closed, value: (c) => values[c], onProgress: progress });
-      post({ id: req.id, type: "route", route: toMessage(g, r) });
+      const routes = planRoutes({ g, start, budget: req.budget, closed: req.closed, values, count: req.count ?? 1, onProgress: progress });
+      post({ id: req.id, type: "routes", routes: routes.map((r) => toMessage(g, r)) });
     }
   } catch (e) {
     post({ id: req.id, type: "error", message: e instanceof Error ? e.message : String(e) });

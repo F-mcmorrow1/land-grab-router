@@ -221,14 +221,18 @@ export class PlannerMap {
           type: "line",
           source: "route",
           layout: { "line-join": "round", "line-cap": "round" },
-          paint: { "line-color": "#000", "line-width": 7, "line-opacity": 0.7 },
+          paint: { "line-color": "#000", "line-width": ["case", ["get", "focused"], 7.5, 5.5], "line-opacity": 0.7 },
         });
         this.map.addLayer({
           id: "route-line",
           type: "line",
           source: "route",
           layout: { "line-join": "round", "line-cap": "round" },
-          paint: { "line-color": ROUTE, "line-width": 3.5 },
+          paint: {
+            "line-color": ["coalesce", ["get", "colour"], ROUTE],
+            "line-width": ["case", ["get", "focused"], 4, 2.5],
+            "line-opacity": ["case", ["get", "focused"], 1, 0.85],
+          },
         });
         // You, on top of everything: accuracy circle, heading wedge, dot.
         this.map.addLayer({ id: "me-accuracy", type: "fill", source: "me", filter: ["==", ["get", "kind"], "accuracy"], paint: { "fill-color": ME, "fill-opacity": 0.14 } });
@@ -334,13 +338,15 @@ export class PlannerMap {
     this.put("hover", { type: "FeatureCollection", features: cell ? [hexOutline(cell)] : [] });
   }
 
-  setRoute(coords: [number, number][] | null, cells: string[] = []) {
-    this.put(
-      "route",
-      coords && coords.length > 1
-        ? { type: "FeatureCollection", features: [{ type: "Feature", geometry: { type: "LineString", coordinates: coords }, properties: {} }] }
-        : empty(),
-    );
+  /** Draws routes in their own colours, the focused one on top, and outlines every hexagon they count. */
+  setRoutes(routes: { coords: [number, number][]; colour: string; focused: boolean }[], cells: string[]) {
+    const ordered = [...routes].sort((a, b) => Number(a.focused) - Number(b.focused));
+    this.put("route", {
+      type: "FeatureCollection",
+      features: ordered
+        .filter((r) => r.coords.length > 1)
+        .map((r) => ({ type: "Feature", geometry: { type: "LineString", coordinates: r.coords }, properties: { colour: r.colour, focused: r.focused } })),
+    });
     this.put("covered", { type: "FeatureCollection", features: cells.map(hexOutline) });
   }
 

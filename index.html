@@ -96,6 +96,15 @@
             </div>
             <span id="budget-hint" class="budget-hint" hidden>Type a distance between 1 and 50 km.</span>
           </div>
+          <div class="field" id="count-field">
+            <span>Routes to plan</span>
+            <div class="stepper">
+              <button type="button" id="count-down" aria-label="One fewer route">−</button>
+              <span class="stepper-box"><output id="count-out" aria-live="polite">1</output><span id="count-unit">route</span></span>
+              <button type="button" id="count-up" aria-label="One more route">+</button>
+            </div>
+            <span class="hint" id="count-hint">Plan several runs at once: each extra route goes for ground the others don't, so you can run them on different days.</span>
+          </div>
           <label class="check"><input type="checkbox" id="closed" checked /> Finish where I start</label>
           <div class="seg small" id="profile" role="group" aria-label="Activity">
             <button type="button" data-profile="foot">Run / walk</button>
@@ -123,7 +132,9 @@
         </section>
 
         <section id="result" hidden>
-          <h2><span class="step">3</span> Your route</h2>
+          <h2><span class="step">3</span> <span id="result-title">Your route</span></h2>
+          <ul id="route-list" class="route-list" hidden></ul>
+          <p id="r-together" class="together" hidden></p>
           <div class="stats">
             <div><span id="r-dist">–</span><small>distance</small></div>
             <div><span id="r-time">–</span><small id="r-time-label">at 5:30/km</small></div>

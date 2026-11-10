@@ -9,6 +9,10 @@ uses, then finds either:
   hexagons of yours that are at risk, and progress towards ones you can't take yet.
 - **Through chosen hexagons**: the shortest street route that enters every hexagon you
   click.
+- **Several routes at once** (most points): set "Routes to plan" to up to 5. Each later route
+  goes for ground the earlier ones don't, so together they're a set of runs for different
+  days. Tick which ones to show (points and standings are for the ticked ones together),
+  tap one to focus it for live location, and Download GPX saves one file per ticked route.
 
 Routes follow real streets and paths, and export as GPX for Garmin Connect or Strava.
 
