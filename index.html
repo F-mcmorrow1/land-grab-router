@@ -2,8 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
     <title>Land Grab Router</title>
+    <meta name="description" content="Plan runs and rides that win the most ground in the strods.uk land grab." />
+    <meta name="theme-color" content="#111112" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Land Grab" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
@@ -11,6 +20,17 @@
   <body>
     <div id="app">
       <aside id="panel">
+        <!-- Phones only: the bit of the sheet that's always showing. -->
+        <div id="sheet-head" class="sheet-head">
+          <div class="sheet-handle" aria-hidden="true"></div>
+          <div class="sheet-row">
+            <button type="button" id="sheet-summary" class="sheet-summary" aria-expanded="false" aria-controls="panel">
+              <b id="sheet-title">Land Grab Router</b>
+              <span id="sheet-sub">Load your data to start</span>
+            </button>
+            <button type="button" id="sheet-plan" class="primary">Plan</button>
+          </div>
+        </div>
         <header>
           <h1>Land Grab <em>Router</em></h1>
           <p class="muted">Plan a run that takes the most ground, and takes it off the teams ahead of you.</p>
@@ -116,6 +136,7 @@
         </div>
         <div id="legend" class="legend"></div>
         <div id="live" class="live" hidden aria-live="polite"></div>
+        <div id="hex-card" class="hex-card" hidden role="dialog" aria-label="Hexagon details"></div>
       </main>
     </div>
     <script type="module" src="/src/main.ts"></script>

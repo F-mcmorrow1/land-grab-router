@@ -1,5 +1,14 @@
-import { cellToBoundary, latLngToCell } from "h3-js";
-import { LngLatBounds, Map as MLMap, Marker, NavigationControl, type ExpressionSpecification, type GeoJSONSource, type IControl } from "maplibre-gl";
+import { cellToBoundary, cellToLatLng, latLngToCell } from "h3-js";
+import {
+  LngLatBounds,
+  Map as MLMap,
+  Marker,
+  NavigationControl,
+  type ExpressionSpecification,
+  type GeoJSONSource,
+  type IControl,
+  type PaddingOptions,
+} from "maplibre-gl";
 import { setWorkerUrl } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 // MapLibre finds its worker next to its own script, which bundlers move; point it at the file directly.
@@ -66,6 +75,8 @@ export interface HexProps {
   outcome: Outcome;
   /** 0..1, opacity in the Opportunities view. */
   strength: number;
+  /** A rival level with the holder, shown as a dot in its colour (like strods.uk). */
+  level?: number;
 }
 
 type FC = FeatureCollection;
@@ -115,6 +126,7 @@ export class PlannerMap {
   /** Latest data for each overlay, kept so it can be applied whenever the style is ready. */
   private data: Record<string, FC> = {
     hexes: empty(),
+    level: empty(),
     reached: empty(),
     covered: empty(),
     selected: empty(),
@@ -169,6 +181,21 @@ export class PlannerMap {
           },
           below,
         );
+        this.map.addLayer(
+          {
+            id: "level-dot",
+            type: "circle",
+            source: "level",
+            minzoom: 9,
+            paint: {
+              "circle-color": INK,
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], 9, 1.5, 13, 7, 16, 10],
+              "circle-stroke-color": BG,
+              "circle-stroke-width": 1,
+            },
+          },
+          below,
+        );
         this.map.addLayer({ id: "reached", type: "fill", source: "reached", paint: { "fill-color": ROUTE, "fill-opacity": 0.22 } }, below);
         this.map.addLayer({ id: "covered", type: "line", source: "covered", paint: { "line-color": ROUTE, "line-width": 1.2, "line-opacity": 0.8 } });
         this.map.addLayer({
@@ -211,6 +238,13 @@ export class PlannerMap {
         });
         this.loaded = true;
         this.applyView();
+        // On phones, start with the attribution folded into its (i) button.
+        if (matchMedia("(max-width: 760px)").matches) {
+          // The attribution text fills in after the first render, which also expands it.
+          this.map.once("idle", () => {
+            this.map.getContainer().querySelector(".maplibregl-ctrl-attrib")?.classList.remove("maplibregl-compact-show");
+          });
+        }
         resolve();
       });
     });
@@ -239,8 +273,15 @@ export class PlannerMap {
     this.applyView();
   }
 
+  private teamColourExpr(prop: string): ExpressionSpecification | string {
+    return this.teamColours.length
+      ? (["match", ["get", prop], ...this.teamColours.flatMap((c, i) => [i, c]), INK] as unknown as ExpressionSpecification)
+      : INK;
+  }
+
   private applyView() {
     if (!this.loaded) return;
+    this.map.setPaintProperty("level-dot", "circle-color", this.teamColourExpr("team"));
     if (this.view === "teams") {
       const colour: ExpressionSpecification | string = this.teamColours.length
         ? (["match", ["get", "team"], ...this.teamColours.flatMap((c, i) => [i, c]), INK] as unknown as ExpressionSpecification)
@@ -256,7 +297,18 @@ export class PlannerMap {
 
   setHexes(hexes: HexProps[]) {
     this.put("hexes", { type: "FeatureCollection", features: hexes.map((h) => hexPolygon(h.cell, h)) });
+    this.put("level", {
+      type: "FeatureCollection",
+      features: hexes
+        .filter((h) => h.level !== undefined)
+        .map((h) => {
+          const [lat, lng] = cellToLatLng(h.cell);
+          return { type: "Feature", geometry: { type: "Point", coordinates: [lng, lat] }, properties: { team: h.level } } as Feature;
+        }),
+    });
   }
+
+
 
   setSelected(cells: Iterable<string>) {
     this.put("selected", { type: "FeatureCollection", features: [...cells].map(hexOutline) });
@@ -341,14 +393,14 @@ export class PlannerMap {
     });
   }
 
-  fitCoords(coords: [number, number][], maxZoom = 14) {
+  fitCoords(coords: [number, number][], maxZoom = 14, padding: number | PaddingOptions = 60) {
     if (!coords.length) return;
     const b = new LngLatBounds(coords[0], coords[0]);
     coords.forEach((c) => b.extend(c));
-    this.map.fitBounds(b, { padding: 60, maxZoom, duration: 1200 });
+    this.map.fitBounds(b, { padding, maxZoom, duration: 1200 });
   }
 
-  fitBounds(bounds: [number, number, number, number]) {
-    this.map.fitBounds(bounds, { padding: 40, maxZoom: 13.5, duration: 1200 });
+  fitBounds(bounds: [number, number, number, number], padding: number | PaddingOptions = 40) {
+    this.map.fitBounds(bounds, { padding, maxZoom: 13.5, duration: 1200 });
   }
 }

@@ -2,7 +2,7 @@ import { cellToBoundary, cellToLatLng, latLngToCell } from "h3-js";
 import { bookmarkletHref, receiveImport } from "./bookmarklet";
 import { makeDemo } from "./data/demo";
 import { parseLandGrab } from "./data/decode";
-import { lead, replay } from "./data/replay";
+import { lead, replay, runnerUp } from "./data/replay";
 import type { Dataset, GameState } from "./data/types";
 import { toGpx } from "./gpx";
 import { haversine, MARGIN } from "./graph/graph";
@@ -11,6 +11,7 @@ import { depthInCell, distanceToRoute } from "./live";
 import { OUTCOME_COLOURS, PlannerMap, type HexProps, type LiveState } from "./map";
 import { crash } from "./crash";
 import { DEFAULT_WEIGHTS, assess, projectRun, valueTable, type HexPlan, type Outcome, type Weights } from "./scoring";
+import { Sheet } from "./sheet";
 import "./style.css";
 import { checkTeam } from "./team";
 import type { RouteMessage, WorkerRequest, WorkerResponse } from "./worker";
@@ -109,6 +110,50 @@ function ask(req: WorkerRequest, progress: (m: string) => void): Promise<WorkerR
 // ---------- map ----------
 const pmap = new PlannerMap($("map"), [-0.1276, 51.5072]);
 
+// ---------- phone layout ----------
+const sheet = new Sheet($("panel"), $("sheet-head"), $("sheet-summary"), (s) => {
+  if (s === "peek") return;
+  hideHexCard();
+  // With a route planned, opening the sheet goes straight to its results.
+  const result = document.getElementById("result");
+  if (state.route && result && !result.hidden) {
+    const panel = $("panel");
+    panel.scrollTo({ top: result.offsetTop - $("sheet-head").offsetHeight - 8 });
+  }
+});
+/** Touch screens get tap-to-inspect instead of hover, and tapping doesn't move the start. */
+const touchUI = () => matchMedia("(hover: none)").matches;
+/** Room to leave around a route so it isn't hidden under the sheet or the map buttons. */
+const fitPadding = () => (sheet.active ? { top: 70, bottom: sheet.covered() + 24, left: 24, right: 24 } : 60);
+let progressText = "";
+let progressError = false;
+
+/** The always-visible summary at the top of the phone sheet. */
+function renderSheetHead() {
+  const title = document.getElementById("sheet-title");
+  const sub = document.getElementById("sheet-sub");
+  const button = document.getElementById("sheet-plan") as HTMLButtonElement | null;
+  if (!title || !sub || !button) return;
+  const r = state.route;
+  if (r && state.game) {
+    const proj = projectRun(state.game, state.team, r.cells, settings.weights);
+    const km = r.length / 1000;
+    const taken = proj.counts.claim + proj.counts.steal;
+    title.textContent = `${km.toFixed(km < 10 ? 2 : 1)} km · ${proj.points.toFixed(1)} points`;
+    sub.textContent = progressText || `${taken} ${taken === 1 ? "hexagon" : "hexagons"} taken${proj.counts.steal ? `, ${proj.counts.steal} from rivals` : ""} · tap for details`;
+  } else if (state.ds) {
+    title.textContent = settings.mode === "max" ? `${settings.budgetKm} km for most points` : `Through ${state.selected.size} ${state.selected.size === 1 ? "hexagon" : "hexagons"}`;
+    sub.textContent =
+      progressText || (settings.mode === "visit" && !state.selected.size ? "Tap hexagons on the map to pick them" : "Tap a hexagon to look, or Plan");
+  } else {
+    title.textContent = "Land Grab Router";
+    sub.textContent = progressText || "Tap here to load your data";
+  }
+  sub.classList.toggle("error", progressError && !!progressText);
+  button.disabled = state.busy || !state.ds;
+  button.textContent = state.busy ? "Planning…" : r ? "Re-plan" : "Plan";
+}
+
 // ---------- helpers ----------
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 const swatch = (colour: string) => `<span class="swatch" style="background:${colour}"></span>`;
@@ -117,9 +162,13 @@ const teamColour = (i: number) => state.ds?.teams[i]?.colour ?? "#555";
 const when = (minutes: number) => `${DAYS[Math.min(6, Math.floor(minutes / 1440))]} ${String(Math.floor((minutes % 1440) / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 
 function setProgress(text: string, isError = false) {
-  const el = $("progress");
+  const el = document.getElementById("progress");
+  if (!el) return;
   el.textContent = text;
   el.classList.toggle("error", isError);
+  progressText = text;
+  progressError = isError;
+  renderSheetHead();
 }
 
 function setPressed(group: string, attr: string, value: string) {
@@ -188,7 +237,8 @@ function loadData(raw: unknown, persist: boolean) {
     const centre = home ? { lat: home.lat, lng: home.lng } : hexCentre(state.game);
     const farFromPlay = !state.start || !centre || haversine(state.start.lat, state.start.lng, centre.lat, centre.lng) > 20_000;
     if (farFromPlay && centre) setStart(centre.lat, centre.lng);
-    if (home?.bounds) pmap.fitBounds(home.bounds);
+    if (sheet.active) sheet.set("peek");
+    if (home?.bounds) pmap.fitBounds(home.bounds, fitPadding());
     else if (centre) pmap.map.flyTo({ center: [centre.lng, centre.lat], zoom: 12 });
 
     const acts = ds.activities.length;
@@ -198,6 +248,7 @@ function loadData(raw: unknown, persist: boolean) {
     refreshHexes();
     renderSelected();
     renderRoute();
+    renderSheetHead();
   } catch (e) {
     $("data-status").textContent = e instanceof Error ? e.message : String(e);
     $("data-status").classList.add("error");
@@ -236,7 +287,9 @@ function refreshHexes() {
   const hexes: HexProps[] = [];
   game.hexes.forEach((h) => {
     const p = state.plans.get(h.cell)!;
-    hexes.push({ cell: h.cell, team: h.holder, opacity: 0.28 + 0.2 * Math.min(lead(h), 3), outcome: p.outcome, strength: strength(p) });
+    const r = runnerUp(h);
+    const level = r !== -1 && h.visits[r] === h.visits[h.holder] ? r : undefined;
+    hexes.push({ cell: h.cell, team: h.holder, opacity: 0.28 + 0.2 * Math.min(lead(h), 3), outcome: p.outcome, strength: strength(p), level });
   });
   pmap.setHexes(hexes);
   renderLegend();
@@ -250,7 +303,9 @@ function renderLegend() {
     return;
   }
   if (settings.view === "teams") {
-    el.innerHTML = state.ds.teams.map((t) => `<div>${swatch(t.colour)}${esc(t.name)}</div>`).join("");
+    el.innerHTML =
+      state.ds.teams.map((t) => `<div>${swatch(t.colour)}${esc(t.name)}</div>`).join("") +
+      `<div class="muted"><span class="dot-key"></span>Dot: a rival is level</div>`;
   } else {
     const keys: Outcome[] = ["steal", "defend", "siege", "secure"];
     el.innerHTML =
@@ -259,32 +314,60 @@ function renderLegend() {
   }
 }
 
-function renderHex(cell: string | null) {
-  const el = $("hex-detail");
-  if (!cell || !state.game || !state.ds) {
-    el.innerHTML = state.ds ? "Point at the map to inspect a hexagon." : "Load game data to inspect hexagons.";
-    return;
-  }
+/** Who holds a hexagon and what your next run would do to it, as HTML. */
+function hexSummary(cell: string): string {
+  if (!state.game || !state.ds) return `<p class="muted">Load your data to see who holds this hexagon.</p>`;
   const p = assess(state.game, state.team, cell, settings.weights);
   const h = state.game.hexes.get(cell);
   const picked = state.selected.has(cell) ? " · picked" : "";
   if (!h) {
-    el.innerHTML = `<b>Unclaimed</b>${picked}<p class="muted">Nobody has crossed it this week. Crossing it takes it: <b>${p.value.toFixed(2)}</b> points.</p>`;
-    return;
+    return `<b>Unclaimed</b>${picked}<p class="muted">Nobody has crossed it this week. Crossing it takes it: <b>${p.value.toFixed(2)}</b> points.</p>`;
   }
   const visits = h.visits
     .map((v, t) => (v ? `<li><span>${swatch(teamColour(t))} ${teamName(t)}</span><span>${v} ${v === 1 ? "crossing" : "crossings"}</span></li>` : ""))
     .join("");
+  const r = runnerUp(h);
+  const level = r !== -1 && h.visits[r] === h.visits[h.holder] ? ` <span class="muted">(${teamName(r)} is level)</span>` : "";
   const detail =
     p.outcome === "siege"
       ? `You need ${p.crossingsNeeded} crossings to take it.`
       : p.outcome === "defend"
         ? `A rival needs ${p.crossingsNeeded} ${p.crossingsNeeded === 1 ? "crossing" : "crossings"} to take it.`
         : "";
-  el.innerHTML = `<div>${swatch(teamColour(h.holder))} Held by <b>${teamName(h.holder)}</b>${picked}</div>
+  return `<div>${swatch(teamColour(h.holder))} Held by <b>${teamName(h.holder)}</b>${level}${picked}</div>
     <ul>${visits}</ul>
     <div class="muted">Last crossed ${when(h.lastCrossedAt)}</div>
     <p><span class="swatch" style="background:${OUTCOME_COLOURS[p.outcome]}"></span> ${OUTCOME_LABELS[p.outcome]}. ${detail} Worth <b>${p.value.toFixed(2)}</b> points on your next run.</p>`;
+}
+
+function renderHex(cell: string | null) {
+  const el = document.getElementById("hex-detail");
+  if (!el) return;
+  if (!cell || !state.game || !state.ds) {
+    el.innerHTML = !state.ds ? "Load game data to inspect hexagons." : touchUI() ? "Tap a hexagon on the map to inspect it." : "Point at the map to inspect a hexagon.";
+    return;
+  }
+  el.innerHTML = hexSummary(cell);
+}
+
+/** Touch screens: tapping the map shows the hexagon in a card above the sheet, with a button to start there. */
+function showHexCard(cell: string, lat: number, lng: number) {
+  const card = $("hex-card");
+  card.innerHTML = `<button type="button" class="hex-card-close" aria-label="Close">×</button>${hexSummary(cell)}
+    <div class="actions"><button type="button" class="primary" data-act="start">Start here</button></div>`;
+  card.querySelector(".hex-card-close")!.addEventListener("click", hideHexCard);
+  card.querySelector('[data-act="start"]')!.addEventListener("click", () => {
+    setStart(lat, lng);
+    hideHexCard();
+  });
+  card.hidden = false;
+  pmap.setHover(cell);
+}
+
+function hideHexCard() {
+  const card = document.getElementById("hex-card");
+  if (card) card.hidden = true;
+  pmap.setHover(null);
 }
 
 // ---------- start / selection ----------
@@ -298,15 +381,18 @@ function renderSelected() {
   pmap.setSelected(state.selected);
   const n = state.selected.size;
   $("selected-count").textContent = `${n} ${n === 1 ? "hexagon" : "hexagons"} picked`;
+  renderSheetHead();
 }
 
 pmap.map.on("click", (e) => {
+  const cell = pmap.cellAt(e.lngLat.lat, e.lngLat.lng);
   if (settings.mode === "visit" && state.tool === "select") {
-    const cell = pmap.cellAt(e.lngLat.lat, e.lngLat.lng);
     if (state.selected.has(cell)) state.selected.delete(cell);
     else state.selected.add(cell);
     renderSelected();
     renderHex(cell);
+  } else if (touchUI()) {
+    showHexCard(cell, e.lngLat.lat, e.lngLat.lng);
   } else {
     setStart(e.lngLat.lat, e.lngLat.lng);
   }
@@ -365,6 +451,7 @@ async function plan() {
 
   state.busy = true;
   $<HTMLButtonElement>("plan").disabled = true;
+  renderSheetHead();
   try {
     const g = state.graph;
     if (!g || g.profile !== settings.profile || g.resolution !== ds.resolution || !bboxContains(g.bbox, need)) {
@@ -392,13 +479,15 @@ async function plan() {
     state.route = res.route;
     $("r-note").dataset.note = note;
     renderRoute();
-    pmap.fitCoords(res.route.coords);
+    if (sheet.active) sheet.set("peek");
+    pmap.fitCoords(res.route.coords, 14, fitPadding());
     setProgress("");
   } catch (e) {
     setProgress(e instanceof Error ? e.message : String(e), true);
   } finally {
     state.busy = false;
     $<HTMLButtonElement>("plan").disabled = false;
+    renderSheetHead();
   }
 }
 
@@ -406,6 +495,7 @@ function renderRoute() {
   const r = state.route;
   const game = state.game;
   const ds = state.ds;
+  renderSheetHead();
   if (!r || !game || !ds) {
     $("result").hidden = true;
     pmap.setRoute(null);
@@ -485,6 +575,7 @@ function applyMode() {
     ? "Click hexagons on the map to pick them. The planner finds the shortest street route that enters every one."
     : "Finds the route that wins the most points within your distance. Blank, unclaimed ground counts too.";
   pmap.map.getCanvas().style.cursor = visit && state.tool === "select" ? "pointer" : "crosshair";
+  renderSheetHead();
 }
 
 $("mode").addEventListener("click", (e) => {
@@ -524,6 +615,7 @@ budget.addEventListener("input", () => {
   settings.budgetKm = parseFloat(budget.value);
   $("budget-out").textContent = `${settings.budgetKm} km`;
   saveSettings();
+  renderSheetHead();
 });
 
 const closed = $<HTMLInputElement>("closed");
@@ -590,6 +682,7 @@ $("locate").addEventListener("click", () => {
   );
 });
 $("plan").addEventListener("click", plan);
+$("sheet-plan").addEventListener("click", plan);
 $("gpx").addEventListener("click", downloadGpx);
 $("clear-route").addEventListener("click", () => {
   state.route = null;
@@ -651,6 +744,7 @@ function liveStart() {
   }
   live.error = "";
   live.state = "follow";
+  if (sheet.active) sheet.set("peek");
   pmap.setLiveState("follow", true);
   live.watch = navigator.geolocation.watchPosition(onFix, onFixError, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20_000 });
   live.timer = window.setInterval(() => {
@@ -786,6 +880,12 @@ if (import.meta.env.DEV) Object.assign(window, { __lgr: { state, live } });
 
 // ---------- one-click import from strods.uk ----------
 const plannerUrl = new URL(import.meta.env.BASE_URL, location.origin).href;
+if (touchUI()) {
+  // No bookmarks bar to drag to on a phone.
+  document.querySelector(".oneclick .hint")!.innerHTML =
+    `<b>One-click import:</b> tap <button type="button" id="copy-bookmarklet" class="link">Copy it for a phone</button>, then follow the ` +
+    `<a href="how-to.html#bookmark">phone steps</a> to save it as a bookmark. Use it on strods.uk/overview.`;
+}
 const bookmark = $<HTMLAnchorElement>("bookmarklet");
 bookmark.href = bookmarkletHref(plannerUrl);
 bookmark.addEventListener("click", (e) => {
@@ -842,4 +942,5 @@ try {
 }
 if (saved) loadData(saved, false);
 else renderHex(null);
+renderSheetHead();
 awaitImport();

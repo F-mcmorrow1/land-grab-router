@@ -544,6 +544,16 @@ footer {
   }
 }
 
+.dot-key {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ink);
+  box-shadow: 0 0 0 1px var(--bg);
+  display: inline-block;
+  margin: 0 3px;
+}
+
 .start-marker {
   width: 26px;
   height: 26px;
@@ -562,29 +572,165 @@ footer {
   color: var(--danger);
 }
 
+/* ---------- Phones: full-screen map, controls in a bottom sheet ---------- */
+
+.sheet-head {
+  display: none;
+}
+
+button,
+a,
+input,
+select,
+summary,
+label {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 @media (max-width: 760px) {
+  html,
+  body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   #app {
-    grid-template-columns: 1fr;
-    grid-template-rows: 55vh auto;
-    height: auto;
+    display: block;
+    height: 100dvh;
   }
 
   main {
-    grid-row: 1;
-    height: 55vh;
+    position: fixed;
+    inset: 0;
   }
 
   #panel {
-    grid-row: 2;
+    --sheet-offset: calc(100% - 96px);
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    height: calc(100dvh - 56px - env(safe-area-inset-top));
     border-right: none;
-    padding: 16px;
+    border-top: 1px solid var(--line);
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.45);
+    padding: 0 16px calc(28px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    transform: translateY(var(--sheet-offset));
+    transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  #panel.dragging {
+    transition: none;
+  }
+
+  #panel[data-sheet="peek"] {
+    overflow: hidden;
+  }
+
+  .sheet-head {
+    display: block;
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    margin: 0 -16px;
+    padding: 8px 16px 12px;
+    background: var(--panel);
+    border-bottom: 1px solid transparent;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  #panel:not([data-sheet="peek"]) .sheet-head {
+    border-bottom-color: var(--line);
+  }
+
+  .sheet-handle {
+    width: 40px;
+    height: 5px;
+    border-radius: 3px;
+    background: #4a4b45;
+    margin: 0 auto 10px;
+  }
+
+  .sheet-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .sheet-summary {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    background: none;
+    border: none;
+    padding: 0;
+    display: grid;
+    gap: 1px;
+  }
+
+  .sheet-summary b {
+    font: 400 22px/1.1 "Instrument Serif", Georgia, serif;
+  }
+
+  .sheet-summary span {
+    color: var(--muted);
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sheet-summary span.error {
+    color: var(--danger);
+  }
+
+  #sheet-plan {
+    padding: 11px 20px;
+    min-height: 44px;
+  }
+
+  /* The sheet head already names the app. */
+  #panel > header {
+    display: none;
+  }
+
+  #panel > section:first-of-type {
+    border-top: none;
+  }
+
+  /* Map overlays sit above the collapsed sheet and clear of the notch. */
+  .map-view,
+  .maplibregl-ctrl-top-right {
+    top: env(safe-area-inset-top);
+  }
+
+  .map-view {
+    margin-top: 12px;
+  }
+
+  .live {
+    top: calc(58px + env(safe-area-inset-top));
+    font-size: 12px;
+    padding: 7px 9px;
+    gap: 3px;
+  }
+
+  .legend,
+  .maplibregl-ctrl-bottom-left,
+  .maplibregl-ctrl-bottom-right {
+    bottom: calc(var(--peek-h, 96px) + 6px);
   }
 
   .legend {
     font-size: 11px;
     padding: 6px 8px;
     gap: 2px;
-    bottom: 30px;
     left: 8px;
   }
 
@@ -592,14 +738,100 @@ footer {
     display: none;
   }
 
-  /* Small map: while live location is on, the card replaces the colour key. */
+  /* While live location is on, the card replaces the colour key. */
   main:has(.live:not([hidden])) .legend {
     display: none;
   }
 
-  .live {
-    font-size: 12px;
-    padding: 7px 9px;
-    gap: 3px;
+  /* Bigger targets for thumbs. */
+  button,
+  .btn {
+    min-height: 44px;
   }
+
+  .seg button {
+    min-height: 40px;
+  }
+
+  button.link {
+    min-height: 32px;
+  }
+
+  .range input {
+    height: 32px;
+  }
+
+  .check input {
+    width: 20px;
+    height: 20px;
+  }
+
+  summary {
+    padding: 8px 0;
+  }
+
+  /* 16px stops iPhones zooming in when you tap a text box. */
+  textarea,
+  select,
+  input {
+    font-size: 16px;
+  }
+
+  .bookmarklet {
+    padding: 11px 14px;
+  }
+}
+
+/* Hexagon details card (tap on touch screens), just above the bottom sheet. */
+.hex-card {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(var(--peek-h, 96px) + 10px);
+  z-index: 4;
+  max-height: 45dvh;
+  overflow-y: auto;
+  background: rgba(23, 23, 24, 0.97);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.hex-card ul {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0;
+}
+
+.hex-card li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hex-card p {
+  margin: 6px 0;
+}
+
+.hex-card-close {
+  float: right;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 24px;
+  line-height: 1;
+  padding: 0 0 0 10px;
+  min-height: 0;
+}
+
+.hex-card .actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.hex-card .actions button {
+  flex: 1;
 }

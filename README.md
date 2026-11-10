@@ -12,6 +12,12 @@ uses, then finds either:
 
 Routes follow real streets and paths, and export as GPX for Garmin Connect or Strava.
 
+**On a phone** the map fills the screen and the controls live in a bottom sheet: drag it up
+or tap its summary to open it, and it drops back down after you plan so you can see the route.
+Tap a hexagon to see who holds it, with a **Start here** button. Add it to your home screen
+(Share → Add to Home Screen on iPhone, ⋮ → Add to Home screen on Android) and it opens
+full-screen like an app.
+
 **Live location** (the target button under the zoom controls) shows where you are on the
 map while you run: the hexagon you're in and who holds it, whether you're far enough inside
 for it to count, how far you are off the planned route, and which of the route's hexagons
