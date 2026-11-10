@@ -12,6 +12,13 @@ uses, then finds either:
 
 Routes follow real streets and paths, and export as GPX for Garmin Connect or Strava.
 
+**Live location** (the target button under the zoom controls) shows where you are on the
+map while you run: the hexagon you're in and who holds it, whether you're far enough inside
+for it to count, how far you are off the planned route, and which of the route's hexagons
+you've reached. It follows you until you pan the map (tap the button to re-centre, tap again
+to turn it off), and keeps the screen awake while it's on. Your location never leaves the
+phone. Phones only allow location on `https://` pages, which GitHub Pages is.
+
 It only opens for data downloaded by a member of **Worst Pace Scenario** (team 29), and always
 plans for that team. Data from any other team gets a mock crash screen and isn't kept. The
 check is in `src/team.ts`. It runs in the browser and this repo is public, so it's a deterrent,
@@ -62,6 +69,7 @@ The data (including other athletes' first names) stays in your browser's local s
 | Through chosen | `src/solve/visitAll.ts` | Orders the hexagons (nearest neighbour + 2-opt + or-opt), enters each one at whichever of its streets suits the legs either side, then tightens. |
 | Tightening | `src/solve/tighten.ts` | A hexagon counts once the route is safely inside it, so going deeper is wasted. Each stop moves to the cheapest point in its hexagon given its neighbours, and stops the rest of the route already covers are dropped; changes are kept only if nothing is lost. On London streets this wins 5–20% more ground per kilometre. |
 | Worker | `src/worker.ts` | Downloads and solves off the main thread. |
+| Live location | `src/live.ts`, `src/main.ts` | Watches the Geolocation API, draws a dot, accuracy circle and heading wedge, and checks each fix against the 15 m margin to mark route hexagons reached. |
 
 ## Assumptions worth knowing
 

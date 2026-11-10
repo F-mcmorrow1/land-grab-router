@@ -1,4 +1,4 @@
-import { cellToBoundary, cellToLatLng } from "h3-js";
+import { cellToBoundary, cellToLatLng, latLngToCell } from "h3-js";
 import { makeDemo } from "./data/demo";
 import { parseLandGrab } from "./data/decode";
 import { lead, replay } from "./data/replay";
@@ -6,7 +6,8 @@ import type { Dataset, GameState } from "./data/types";
 import { toGpx } from "./gpx";
 import { haversine, MARGIN } from "./graph/graph";
 import { bboxAround, bboxContains, type BBox, type Profile } from "./graph/overpass";
-import { OUTCOME_COLOURS, PlannerMap, type HexProps } from "./map";
+import { depthInCell, distanceToRoute } from "./live";
+import { OUTCOME_COLOURS, PlannerMap, type HexProps, type LiveState } from "./map";
 import { crash } from "./crash";
 import { DEFAULT_WEIGHTS, assess, projectRun, valueTable, type HexPlan, type Outcome, type Weights } from "./scoring";
 import "./style.css";
@@ -59,6 +60,29 @@ const state = {
   route: null as RouteMessage | null,
   hover: null as string | null,
   busy: false,
+};
+
+interface Fix {
+  lat: number;
+  lng: number;
+  accuracy: number;
+  /** Degrees clockwise from north, or null when standing still. */
+  heading: number | null;
+  at: number;
+}
+
+/** Live location: off, following you, or on but left where you panned to. */
+const live = {
+  state: "off" as LiveState,
+  watch: null as number | null,
+  fix: null as Fix | null,
+  /** Route hexagons you've been far enough inside to count, this session. */
+  reached: new Set<string>(),
+  routeFor: null as RouteMessage | null,
+  routeCells: new Set<string>(),
+  wake: null as WakeLockSentinel | null,
+  timer: 0,
+  error: "",
 };
 
 // ---------- worker ----------
@@ -388,6 +412,7 @@ function renderRoute() {
   }
   $("result").hidden = false;
   pmap.setRoute(r.coords, r.cells);
+  syncLiveRoute();
   const proj = projectRun(game, state.team, r.cells, settings.weights);
   const km = r.length / 1000;
   $("r-dist").textContent = `${km.toFixed(km < 10 ? 2 : 1)} km`;
@@ -548,6 +573,10 @@ $("clear-selected").addEventListener("click", () => {
   renderSelected();
 });
 $("locate").addEventListener("click", () => {
+  if (live.fix) {
+    setStart(live.fix.lat, live.fix.lng);
+    return;
+  }
   if (!navigator.geolocation) return setProgress("Your browser can't share its location.", true);
   setProgress("Finding you…");
   navigator.geolocation.getCurrentPosition(
@@ -565,6 +594,194 @@ $("clear-route").addEventListener("click", () => {
   state.route = null;
   renderRoute();
 });
+
+// ---------- live location ----------
+const LIVE_LABELS: Record<Outcome, string> = {
+  claim: "unclaimed, yours if you get in",
+  steal: "one crossing takes it",
+  defend: "yours, but at risk",
+  siege: "not enough to take it yet",
+  secure: "yours and safe",
+};
+
+/** Resets progress when the route changes, and redraws it. */
+function syncLiveRoute() {
+  if (live.routeFor === state.route) return;
+  live.routeFor = state.route;
+  live.routeCells = new Set(state.route?.cells ?? []);
+  live.reached.clear();
+  pmap.setReached([]);
+  renderLive();
+}
+
+function bearing(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+  const toRad = Math.PI / 180;
+  const y = Math.sin((b.lng - a.lng) * toRad) * Math.cos(b.lat * toRad);
+  const x = Math.cos(a.lat * toRad) * Math.sin(b.lat * toRad) - Math.sin(a.lat * toRad) * Math.cos(b.lat * toRad) * Math.cos((b.lng - a.lng) * toRad);
+  return ((Math.atan2(y, x) / toRad) + 360) % 360;
+}
+
+async function keepAwake(on: boolean) {
+  try {
+    if (on && !live.wake && "wakeLock" in navigator && document.visibilityState === "visible") {
+      const lock = await navigator.wakeLock.request("screen");
+      live.wake = lock;
+      lock.addEventListener("release", () => {
+        if (live.wake === lock) live.wake = null;
+      });
+    } else if (!on && live.wake) {
+      const lock = live.wake;
+      live.wake = null;
+      await lock.release();
+    }
+  } catch {
+    /* refused (battery saver, unsupported): the map still works */
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  // Browsers drop the lock when the tab is hidden; take it back on return.
+  if (document.visibilityState === "visible" && live.state !== "off") keepAwake(true);
+});
+
+function liveStart() {
+  if (!navigator.geolocation) {
+    live.error = "This browser can't share its location.";
+    return renderLive(true);
+  }
+  live.error = "";
+  live.state = "follow";
+  pmap.setLiveState("follow", true);
+  live.watch = navigator.geolocation.watchPosition(onFix, onFixError, { enableHighAccuracy: true, maximumAge: 2000, timeout: 20_000 });
+  live.timer = window.setInterval(() => {
+    if (live.fix) pmap.setMe({ ...live.fix, stale: Date.now() - live.fix.at > 20_000 });
+    renderLive();
+  }, 5000);
+  keepAwake(true);
+  renderLive();
+}
+
+function liveStop() {
+  if (live.watch !== null) navigator.geolocation.clearWatch(live.watch);
+  clearInterval(live.timer);
+  live.watch = null;
+  live.state = "off";
+  live.fix = null;
+  pmap.setMe(null);
+  pmap.setLiveState("off");
+  pmap.clearInset();
+  keepAwake(false);
+  renderLive();
+}
+
+function onFix(pos: GeolocationPosition) {
+  if (live.state === "off") return;
+  const { latitude: lat, longitude: lng, accuracy, heading, speed } = pos.coords;
+  const prev = live.fix;
+  // Trust the GPS heading while moving; otherwise work it out from the last fix, once you've
+  // moved further than the GPS wobbles.
+  let dir: number | null = heading !== null && Number.isFinite(heading) && (speed ?? 1) > 0.5 ? heading : null;
+  if (dir === null && prev) {
+    const moved = haversine(prev.lat, prev.lng, lat, lng);
+    dir = moved > Math.max(8, accuracy / 2) ? bearing(prev, { lat, lng }) : prev.heading;
+  }
+  live.fix = { lat, lng, accuracy, heading: dir, at: pos.timestamp || Date.now() };
+  live.error = "";
+  pmap.setMe(live.fix);
+  pmap.setLiveState(live.state);
+  renderLive();
+  if (live.state === "follow") pmap.follow(lat, lng, !prev, liveInset());
+
+  syncLiveRoute();
+  const cell = latLngToCell(lat, lng, state.ds?.resolution ?? 8);
+  if (live.routeCells.has(cell) && !live.reached.has(cell) && depthInCell(cell, lat, lng) >= MARGIN) {
+    live.reached.add(cell);
+    pmap.setReached(live.reached);
+  }
+  if (live.state === "follow") renderHex(cell);
+  renderLive();
+}
+
+function onFixError(err: GeolocationPositionError) {
+  if (err.code === err.PERMISSION_DENIED) {
+    liveStop();
+    live.error = "Location is blocked for this site. Allow it in your browser's site settings, then try again.";
+    renderLive(true);
+    return;
+  }
+  // Timeouts and lost signal: keep watching and say so.
+  live.error = live.fix ? "GPS signal lost, keep going." : "Waiting for GPS…";
+  renderLive();
+}
+
+/** Pixels at the top of the map taken by the live card, so following keeps you below it. */
+function liveInset() {
+  const el = $("live");
+  return el.hidden ? 0 : el.offsetTop + el.offsetHeight + 12;
+}
+
+function renderLive(showError = false) {
+  const el = $("live");
+  if (live.state === "off") {
+    el.hidden = !(showError && live.error);
+    el.innerHTML = live.error ? `<div class="live-row warn">${esc(live.error)}</div>` : "";
+    if (showError) setTimeout(() => live.state === "off" && (el.hidden = true), 10_000);
+    return;
+  }
+  el.hidden = false;
+  const f = live.fix;
+  const head = `<div class="live-row"><span class="live-pill"><i></i>Live</span>`;
+  if (!f) {
+    el.innerHTML = `${head}<span>${esc(live.error || "Finding you…")}</span></div>`;
+    return;
+  }
+  const rows: string[] = [];
+  const age = Math.round((Date.now() - f.at) / 1000);
+  const gps = `GPS ±${Math.round(f.accuracy)} m${age > 20 ? `, last fix ${age} s ago` : ""}`;
+  rows.push(`${head}<span class="${f.accuracy > 25 || age > 20 ? "warn" : "muted"}">${gps}</span></div>`);
+  if (live.error) rows.push(`<div class="live-row warn">${esc(live.error)}</div>`);
+
+  const cell = latLngToCell(f.lat, f.lng, state.ds?.resolution ?? 8);
+  const depth = depthInCell(cell, f.lat, f.lng);
+  if (state.game && state.ds) {
+    const h = state.game.hexes.get(cell);
+    const p = assess(state.game, state.team, cell, settings.weights);
+    const owner = h ? `${swatch(teamColour(h.holder))}<b>${teamName(h.holder)}</b>` : `${swatch(OUTCOME_COLOURS.claim)}<b>Unclaimed</b>`;
+    rows.push(`<div class="live-row">${owner}<span class="muted">${LIVE_LABELS[p.outcome]}</span></div>`);
+  }
+  rows.push(
+    depth >= MARGIN
+      ? `<div class="live-row ok">${Math.round(depth)} m inside: this hexagon counts</div>`
+      : `<div class="live-row">${Math.round(depth)} m inside: ${Math.ceil(MARGIN - depth)} m more and it counts</div>`,
+  );
+  const r = state.route;
+  if (r && live.routeCells.size) {
+    const off = distanceToRoute(r.coords, f.lat, f.lng);
+    const n = live.reached.size;
+    const total = live.routeCells.size;
+    rows.push(
+      `<div class="live-row"><span>Route: <b>${n}</b> of ${total} hexagons reached</span>${off > 40 ? `<span class="warn">${off >= 1000 ? (off / 1000).toFixed(1) + " km" : Math.round(off) + " m"} off route</span>` : ""}</div>`,
+      `<div class="live-bar"><i style="width:${Math.round((100 * n) / total)}%"></i></div>`,
+    );
+  }
+  el.innerHTML = rows.join("");
+}
+
+pmap.addLiveButton(() => {
+  if (live.state === "off") liveStart();
+  else if (live.state === "free") {
+    live.state = "follow";
+    pmap.setLiveState("follow", !live.fix);
+    if (live.fix) pmap.follow(live.fix.lat, live.fix.lng, false, liveInset());
+  } else liveStop();
+});
+pmap.onUserPan(() => {
+  if (live.state === "follow") {
+    live.state = "free";
+    pmap.setLiveState("free");
+  }
+});
+
+if (import.meta.env.DEV) Object.assign(window, { __lgr: { state, live } });
 
 // ---------- start up ----------
 setPressed("view", "data-view", settings.view);

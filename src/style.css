@@ -425,6 +425,107 @@ footer {
   align-items: center;
 }
 
+.live {
+  position: absolute;
+  top: 58px;
+  left: 12px;
+  width: min(310px, calc(100% - 70px));
+  background: rgba(17, 17, 18, 0.93);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-size: 13px;
+  display: grid;
+  gap: 5px;
+}
+
+.live-row {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.live-row .warn,
+.live-row.warn {
+  color: #ffb020;
+}
+
+.live-row.ok {
+  color: var(--accent);
+}
+
+.live-row b {
+  font-weight: 600;
+}
+
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #3d8bff;
+  color: #fff;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 1px 8px 1px 6px;
+}
+
+.live-pill i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.live-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.live-bar i {
+  display: block;
+  height: 100%;
+  background: var(--route);
+  transition: width 0.4s;
+}
+
+.live-ctrl button {
+  display: grid;
+  place-items: center;
+  color: #333;
+}
+
+.live-ctrl[data-state="follow"] button {
+  color: #3d8bff;
+}
+
+.live-ctrl[data-state="free"] button {
+  color: #7aa7e8;
+}
+
+.live-ctrl.waiting button svg {
+  animation: live-pulse 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-pill i,
+  .live-ctrl.waiting button svg {
+    animation: none;
+  }
+}
+
 .start-marker {
   width: 26px;
   height: 26px;
@@ -471,5 +572,16 @@ footer {
 
   .legend .muted {
     display: none;
+  }
+
+  /* Small map: while live location is on, the card replaces the colour key. */
+  main:has(.live:not([hidden])) .legend {
+    display: none;
+  }
+
+  .live {
+    font-size: 12px;
+    padding: 7px 9px;
+    gap: 3px;
   }
 }

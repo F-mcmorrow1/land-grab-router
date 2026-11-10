@@ -1,5 +1,5 @@
 import { cellToBoundary, latLngToCell } from "h3-js";
-import { LngLatBounds, Map as MLMap, Marker, NavigationControl, type ExpressionSpecification, type GeoJSONSource } from "maplibre-gl";
+import { LngLatBounds, Map as MLMap, Marker, NavigationControl, type ExpressionSpecification, type GeoJSONSource, type IControl } from "maplibre-gl";
 import { setWorkerUrl } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 // MapLibre finds its worker next to its own script, which bundlers move; point it at the file directly.
@@ -7,12 +7,48 @@ import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 
 setWorkerUrl(maplibreWorkerUrl);
 import type { Feature, FeatureCollection } from "geojson";
+import { circleRing, headingWedge } from "./live";
 import type { Outcome } from "./scoring";
 
 export const BASEMAP = "https://tiles.openfreemap.org/styles/dark";
 export const BG = "#111112";
 export const INK = "#f4f4ed";
 export const ROUTE = "#38f2ff";
+export const ME = "#3d8bff";
+
+export type LiveState = "off" | "follow" | "free";
+
+/** Map button that turns live location on, re-centres on you, or turns it off. */
+class LiveControl implements IControl {
+  private box = document.createElement("div");
+  private button = document.createElement("button");
+
+  constructor(private onPress: () => void) {}
+
+  onAdd() {
+    this.box.className = "maplibregl-ctrl maplibregl-ctrl-group live-ctrl";
+    this.button.type = "button";
+    this.button.title = "Show my live location";
+    this.button.setAttribute("aria-label", "Show my live location");
+    this.button.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>`;
+    this.button.addEventListener("click", () => this.onPress());
+    this.box.appendChild(this.button);
+    return this.box;
+  }
+
+  onRemove() {
+    this.box.remove();
+  }
+
+  setState(state: LiveState, waiting = false) {
+    this.box.dataset.state = state;
+    this.box.classList.toggle("waiting", waiting);
+    const label = state === "off" ? "Show my live location" : state === "free" ? "Centre on my location" : "Turn off live location";
+    this.button.title = label;
+    this.button.setAttribute("aria-label", label);
+    this.button.setAttribute("aria-pressed", String(state !== "off"));
+  }
+}
 
 export const OUTCOME_COLOURS: Record<Outcome, string> = {
   claim: "#d2ff00",
@@ -77,7 +113,16 @@ export class PlannerMap {
   private view: "teams" | "plan" = "teams";
   private loaded = false;
   /** Latest data for each overlay, kept so it can be applied whenever the style is ready. */
-  private data: Record<string, FC> = { hexes: empty(), covered: empty(), selected: empty(), hover: empty(), route: empty() };
+  private data: Record<string, FC> = {
+    hexes: empty(),
+    reached: empty(),
+    covered: empty(),
+    selected: empty(),
+    hover: empty(),
+    route: empty(),
+    me: empty(),
+  };
+  private live: LiveControl | null = null;
 
   constructor(container: HTMLElement, center: [number, number]) {
     this.map = new MLMap({
@@ -91,6 +136,9 @@ export class PlannerMap {
       attributionControl: { compact: true },
     });
     this.map.touchZoomRotate.disableRotation();
+    this.map.on("moveend", () => {
+      if (this.followZoom !== null && Math.abs(this.map.getZoom() - this.followZoom) < 0.05) this.followZoom = null;
+    });
     this.map.addControl(new NavigationControl({ showCompass: false }), "top-right");
     // The basemap asks for a few patterns its sprite doesn't ship; stand in a transparent pixel.
     // (MapLibre still logs a warning for these; it's harmless.)
@@ -121,6 +169,7 @@ export class PlannerMap {
           },
           below,
         );
+        this.map.addLayer({ id: "reached", type: "fill", source: "reached", paint: { "fill-color": ROUTE, "fill-opacity": 0.22 } }, below);
         this.map.addLayer({ id: "covered", type: "line", source: "covered", paint: { "line-color": ROUTE, "line-width": 1.2, "line-opacity": 0.8 } });
         this.map.addLayer({
           id: "selected",
@@ -142,6 +191,23 @@ export class PlannerMap {
           source: "route",
           layout: { "line-join": "round", "line-cap": "round" },
           paint: { "line-color": ROUTE, "line-width": 3.5 },
+        });
+        // You, on top of everything: accuracy circle, heading wedge, dot.
+        this.map.addLayer({ id: "me-accuracy", type: "fill", source: "me", filter: ["==", ["get", "kind"], "accuracy"], paint: { "fill-color": ME, "fill-opacity": 0.14 } });
+        this.map.addLayer({
+          id: "me-accuracy-edge",
+          type: "line",
+          source: "me",
+          filter: ["==", ["get", "kind"], "accuracy"],
+          paint: { "line-color": ME, "line-width": 1, "line-opacity": 0.5 },
+        });
+        this.map.addLayer({ id: "me-heading", type: "fill", source: "me", filter: ["==", ["get", "kind"], "heading"], paint: { "fill-color": ME, "fill-opacity": 0.55 } });
+        this.map.addLayer({
+          id: "me-dot",
+          type: "circle",
+          source: "me",
+          filter: ["==", ["get", "kind"], "dot"],
+          paint: { "circle-radius": 7, "circle-color": ME, "circle-stroke-color": "#fff", "circle-stroke-width": 2.5, "circle-opacity": ["get", "opacity"] },
         });
         this.loaded = true;
         this.applyView();
@@ -208,6 +274,60 @@ export class PlannerMap {
         : empty(),
     );
     this.put("covered", { type: "FeatureCollection", features: cells.map(hexOutline) });
+  }
+
+  /** Adds the live location button; `onPress` decides what a press does. */
+  addLiveButton(onPress: () => void) {
+    this.live = new LiveControl(onPress);
+    this.map.addControl(this.live, "top-right");
+    this.live.setState("off");
+  }
+
+  setLiveState(state: LiveState, waiting = false) {
+    this.live?.setState(state, waiting);
+  }
+
+  /** Draws you at a position; `stale` fades the dot when the fix is old. */
+  setMe(fix: { lat: number; lng: number; accuracy: number; heading: number | null; stale?: boolean } | null) {
+    if (!fix) return this.put("me", empty());
+    const { lat, lng, accuracy, heading } = fix;
+    const features: Feature[] = [
+      { type: "Feature", geometry: { type: "Polygon", coordinates: [circleRing(lat, lng, Math.max(accuracy, 3))] }, properties: { kind: "accuracy" } },
+      { type: "Feature", geometry: { type: "Point", coordinates: [lng, lat] }, properties: { kind: "dot", opacity: fix.stale ? 0.45 : 1 } },
+    ];
+    if (heading !== null && Number.isFinite(heading)) {
+      features.splice(1, 0, { type: "Feature", geometry: { type: "Polygon", coordinates: [headingWedge(lat, lng, heading)] }, properties: { kind: "heading" } });
+    }
+    this.put("me", { type: "FeatureCollection", features });
+  }
+
+  setReached(cells: Iterable<string>) {
+    this.put("reached", { type: "FeatureCollection", features: [...cells].map((c) => hexPolygon(c)) });
+  }
+
+  /**
+   * Moves the camera to you without changing zoom (or zooms in on the first fix), keeping you
+   * in the part of the map below `topInset` pixels so the live card doesn't cover you.
+   */
+  follow(lat: number, lng: number, first: boolean, topInset = 0) {
+    const padding = { top: topInset, bottom: 0, left: 0, right: 0 };
+    // Keep heading for street level until we get there, even if the next fix interrupts.
+    if (first) this.followZoom = Math.max(this.map.getZoom(), 15);
+    const zoom = this.followZoom ?? undefined;
+    this.map.easeTo({ center: [lng, lat], zoom, duration: first ? 1000 : 600, padding });
+  }
+  private followZoom: number | null = null;
+
+  /** Undo the inset `follow` leaves on the camera. */
+  clearInset() {
+    this.map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
+  }
+
+  /** Calls back when the person drags the map themselves. */
+  onUserPan(cb: () => void) {
+    this.map.on("dragstart", (e) => {
+      if ((e as { originalEvent?: Event }).originalEvent) cb();
+    });
   }
 
   setStart(lat: number, lng: number) {
