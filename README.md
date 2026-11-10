@@ -91,6 +91,11 @@ The data (including other athletes' first names) stays in your browser's local s
   double back would be worth more than this planner thinks.
 - **15 m GPS margin.** A hexagon only counts, and is only used as a target, where the
   route gets at least 15 m inside its edges. Change `MARGIN` in `src/graph/graph.ts`.
+- **Hexagons you've already crossed.** By default routes skip hexagons on your own activities
+  this week (the data marks them `mine`): they score nothing and routes don't aim for them,
+  though a route may still pass through one on the way. You can skip only today's, or count
+  them. By the site's own rules a repeat crossing still adds a visit for your team, so
+  "Count them" can win more in contested hexagons; skipping assumes repeats don't count.
 - **Turning back mid-street.** Long streets are cut into 20 m pieces (`MAX_PIECE`), so a
   quick trip into a hexagon turns back at most ~20 m past the margin instead of running
   on to the next junction. Like a real U-turn, it can happen anywhere along a street.

@@ -127,6 +127,7 @@ export class PlannerMap {
   private data: Record<string, FC> = {
     hexes: empty(),
     level: empty(),
+    mine: empty(),
     reached: empty(),
     covered: empty(),
     selected: empty(),
@@ -193,6 +194,16 @@ export class PlannerMap {
               "circle-stroke-color": BG,
               "circle-stroke-width": 1,
             },
+          },
+          below,
+        );
+        this.map.addLayer(
+          {
+            id: "mine",
+            type: "line",
+            source: "mine",
+            minzoom: 9,
+            paint: { "line-color": INK, "line-width": 2, "line-opacity": 0.85, "line-dasharray": [2, 1.5] },
           },
           below,
         );
@@ -309,6 +320,11 @@ export class PlannerMap {
   }
 
 
+
+  /** Dashed outlines on hexagons you've crossed that routes are skipping. */
+  setMine(cells: Iterable<string>) {
+    this.put("mine", { type: "FeatureCollection", features: [...cells].map(hexOutline) });
+  }
 
   setSelected(cells: Iterable<string>) {
     this.put("selected", { type: "FeatureCollection", features: [...cells].map(hexOutline) });

@@ -2,6 +2,7 @@ import { cellToBoundary, cellToLatLng, latLngToCell } from "h3-js";
 import { bookmarkletHref, receiveImport } from "./bookmarklet";
 import { clampKm, formatKm, MAX_KM, MIN_KM, parseKm, stepKm } from "./budget";
 import { makeDemo } from "./data/demo";
+import { crossedByMe, type SkipMine } from "./data/mine";
 import { parseLandGrab } from "./data/decode";
 import { lead, replay, runnerUp } from "./data/replay";
 import type { Dataset, GameState } from "./data/types";
@@ -31,10 +32,12 @@ interface Settings {
   profile: Profile;
   weights: Weights;
   view: "teams" | "plan";
+  /** Leave hexagons you've already crossed out of new routes. */
+  skipMine: SkipMine;
 }
 
 function loadSettings(): Settings {
-  const base: Settings = { mode: "max", budgetKm: 8, closed: true, profile: "foot", weights: { ...DEFAULT_WEIGHTS }, view: "teams" };
+  const base: Settings = { mode: "max", budgetKm: 8, closed: true, profile: "foot", weights: { ...DEFAULT_WEIGHTS }, view: "teams", skipMine: "week" };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
     return { ...base, ...saved, weights: { ...base.weights, ...saved.weights } };
@@ -63,7 +66,16 @@ const state = {
   route: null as RouteMessage | null,
   hover: null as string | null,
   busy: false,
+  /** Hexagons you've crossed that routes are skipping (per the skipMine setting). */
+  mine: new Set<string>(),
+  /** Every hexagon you've crossed this week, for the hexagon details. */
+  mineWeek: new Set<string>(),
 };
+
+/** The route's hexagons that count: all of them, less any you're skipping because you've crossed them. */
+function countable(cells: string[]) {
+  return cells.filter((c) => !state.mine.has(c));
+}
 
 interface Fix {
   lat: number;
@@ -137,7 +149,7 @@ function renderSheetHead() {
   if (!title || !sub || !button) return;
   const r = state.route;
   if (r && state.game) {
-    const proj = projectRun(state.game, state.team, r.cells, settings.weights);
+    const proj = projectRun(state.game, state.team, countable(r.cells), settings.weights);
     const km = r.length / 1000;
     const taken = proj.counts.claim + proj.counts.steal;
     title.textContent = `${km.toFixed(km < 10 ? 2 : 1)} km · ${proj.points.toFixed(1)} points`;
@@ -285,14 +297,22 @@ function refreshHexes() {
   const game = state.game;
   if (!game) return;
   state.plans = valueTable(game, state.team, settings.weights);
+  if (state.ds) {
+    state.mine = crossedByMe(state.ds, settings.skipMine);
+    state.mineWeek = crossedByMe(state.ds, "week");
+  }
   const hexes: HexProps[] = [];
   game.hexes.forEach((h) => {
     const p = state.plans.get(h.cell)!;
     const r = runnerUp(h);
     const level = r !== -1 && h.visits[r] === h.visits[h.holder] ? r : undefined;
-    hexes.push({ cell: h.cell, team: h.holder, opacity: 0.28 + 0.2 * Math.min(lead(h), 3), outcome: p.outcome, strength: strength(p), level });
+    // Skipped hexagons fade right back in the Opportunities view: they're worth nothing to you.
+    const s = state.mine.has(h.cell) ? 0.14 : strength(p);
+    hexes.push({ cell: h.cell, team: h.holder, opacity: 0.28 + 0.2 * Math.min(lead(h), 3), outcome: p.outcome, strength: s, level });
   });
   pmap.setHexes(hexes);
+  pmap.setMine(state.mine);
+  renderSkipHint();
   renderLegend();
   renderHex(state.hover);
 }
@@ -306,11 +326,13 @@ function renderLegend() {
   if (settings.view === "teams") {
     el.innerHTML =
       state.ds.teams.map((t) => `<div>${swatch(t.colour)}${esc(t.name)}</div>`).join("") +
-      `<div class="muted"><span class="dot-key"></span>Dot: a rival is level</div>`;
+      `<div class="muted"><span class="dot-key"></span>Dot: a rival is level</div>` +
+      (state.mine.size ? `<div class="muted"><span class="mine-key"></span>Dashed: you've crossed it, skipped</div>` : "");
   } else {
     const keys: Outcome[] = ["steal", "defend", "siege", "secure"];
     el.innerHTML =
       keys.map((k) => `<div>${swatch(OUTCOME_COLOURS[k])}${OUTCOME_LABELS[k]}</div>`).join("") +
+      (state.mine.size ? `<div><span class="mine-key"></span>You've crossed it, so routes skip it</div>` : "") +
       `<div class="muted">Blank ground is unclaimed and worth taking too</div>`;
   }
 }
@@ -335,9 +357,14 @@ function hexSummary(cell: string): string {
       : p.outcome === "defend"
         ? `A rival needs ${p.crossingsNeeded} ${p.crossingsNeeded === 1 ? "crossing" : "crossings"} to take it.`
         : "";
+  const yours = state.mine.has(cell)
+    ? `<div class="mine-note">You've crossed it ${settings.skipMine === "today" ? "today" : "this week"}, so routes skip it.</div>`
+    : state.mineWeek.has(cell)
+      ? `<div class="muted">You crossed it earlier this week.</div>`
+      : "";
   return `<div>${swatch(teamColour(h.holder))} Held by <b>${teamName(h.holder)}</b>${level}${picked}</div>
     <ul>${visits}</ul>
-    <div class="muted">Last crossed ${when(h.lastCrossedAt)}</div>
+    <div class="muted">Last crossed ${when(h.lastCrossedAt)}</div>${yours}
     <p><span class="swatch" style="background:${OUTCOME_COLOURS[p.outcome]}"></span> ${OUTCOME_LABELS[p.outcome]}. ${detail} Worth <b>${p.value.toFixed(2)}</b> points on your next run.</p>`;
 }
 
@@ -470,7 +497,8 @@ async function plan() {
             start,
             budget,
             closed: settings.closed,
-            known: [...state.plans].map(([c, p]) => [c, p.value]),
+            // Hexagons you're skipping are worth nothing, so routes don't go out of their way for them.
+            known: [...state.plans].map(([c, p]) => [c, state.mine.has(c) ? 0 : p.value]),
             unclaimed: settings.weights.claim,
           }
         : { id: 0, type: "visitAll", start, targets: [...state.selected], closed: settings.closed };
@@ -505,7 +533,9 @@ function renderRoute() {
   $("result").hidden = false;
   pmap.setRoute(r.coords, r.cells);
   syncLiveRoute();
-  const proj = projectRun(game, state.team, r.cells, settings.weights);
+  const counted = countable(r.cells);
+  const skipped = r.cells.length - counted.length;
+  const proj = projectRun(game, state.team, counted, settings.weights);
   const km = r.length / 1000;
   $("r-dist").textContent = `${km.toFixed(km < 10 ? 2 : 1)} km`;
   const minutes = settings.profile === "bike" ? (km / 20) * 60 : km * 5.5;
@@ -520,10 +550,11 @@ function renderRoute() {
     ["siege", "closer to taking"],
     ["secure", "already safe"],
   ];
-  $("breakdown").innerHTML = chips
-    .filter(([k]) => proj.counts[k] > 0)
-    .map(([k, label]) => `<li>${swatch(OUTCOME_COLOURS[k])}<b>${proj.counts[k]}</b> ${label}</li>`)
-    .join("");
+  $("breakdown").innerHTML =
+    chips
+      .filter(([k]) => proj.counts[k] > 0)
+      .map(([k, label]) => `<li>${swatch(OUTCOME_COLOURS[k])}<b>${proj.counts[k]}</b> ${label}</li>`)
+      .join("") + (skipped ? `<li><span class="mine-key"></span><b>${skipped}</b> you've already crossed</li>` : "");
 
   const order = ds.teams.map((_, i) => i).sort((a, b) => proj.heldAfter[b] - proj.heldAfter[a]);
   $("projection").innerHTML =
@@ -547,6 +578,7 @@ function renderRoute() {
     if (!missed.length) notes.push(`Passes through all ${state.selected.size} picked hexagons.`);
   }
   notes.push(`Gets at least ${MARGIN} m inside ${r.cells.length} hexagons, so GPS drift shouldn't cost you any. Each counts once per run.`);
+  if (skipped) notes.push(`${skipped} of them you've already crossed, so they're left out of the points and standings above.`);
   $("r-note").textContent = notes.join(" ");
 }
 
@@ -607,6 +639,30 @@ $("profile").addEventListener("click", (e) => {
   settings.profile = p;
   saveSettings();
   setPressed("profile", "data-profile", p);
+});
+
+// ---------- hexagons you've already crossed ----------
+function renderSkipHint() {
+  const hint = document.getElementById("skip-hint");
+  if (!hint || !state.ds) return;
+  const any = state.ds.activities.some((a) => a.mine);
+  hint.textContent = !any
+    ? "This data doesn't include any of your own activities this week."
+    : settings.skipMine === "off"
+      ? `Routes treat the ${state.mineWeek.size} hexagons you've crossed this week like any other.`
+      : `Skipping ${state.mine.size} ${state.mine.size === 1 ? "hexagon" : "hexagons"} you've crossed ${settings.skipMine === "today" ? "today" : "this week"}.`;
+}
+
+setPressed("skip", "data-skip", settings.skipMine);
+$("skip").addEventListener("click", (e) => {
+  const v = (e.target as HTMLElement).closest("button")?.dataset.skip as SkipMine | undefined;
+  if (!v || v === settings.skipMine) return;
+  settings.skipMine = v;
+  saveSettings();
+  setPressed("skip", "data-skip", v);
+  refreshHexes();
+  renderRoute();
+  if (state.route && settings.mode === "max") setProgress("Re-plan to route with this setting.");
 });
 
 const budget = $<HTMLInputElement>("budget");
@@ -883,9 +939,11 @@ function renderLive(showError = false) {
     rows.push(`<div class="live-row">${owner}<span class="muted">${LIVE_LABELS[p.outcome]}</span></div>`);
   }
   rows.push(
-    depth >= MARGIN
-      ? `<div class="live-row ok">${Math.round(depth)} m inside: this hexagon counts</div>`
-      : `<div class="live-row">${Math.round(depth)} m inside: ${Math.ceil(MARGIN - depth)} m more and it counts</div>`,
+    state.mine.has(cell)
+      ? `<div class="live-row muted">You've already crossed this one</div>`
+      : depth >= MARGIN
+        ? `<div class="live-row ok">${Math.round(depth)} m inside: this hexagon counts</div>`
+        : `<div class="live-row">${Math.round(depth)} m inside: ${Math.ceil(MARGIN - depth)} m more and it counts</div>`,
   );
   const r = state.route;
   if (r && live.routeCells.size) {
@@ -915,7 +973,7 @@ pmap.onUserPan(() => {
   }
 });
 
-if (import.meta.env.DEV) Object.assign(window, { __lgr: { state, live } });
+if (import.meta.env.DEV) Object.assign(window, { __lgr: { state, live, pmap } });
 
 // ---------- one-click import from strods.uk ----------
 const plannerUrl = new URL(import.meta.env.BASE_URL, location.origin).href;

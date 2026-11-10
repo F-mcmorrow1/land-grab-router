@@ -609,6 +609,26 @@ footer {
   margin: 0 3px;
 }
 
+.mine-key {
+  width: 12px;
+  height: 12px;
+  border: 1.5px dashed var(--ink);
+  border-radius: 3px;
+  display: inline-block;
+  flex: none;
+  margin-right: 2px;
+}
+
+.mine-note {
+  color: var(--accent);
+  margin-top: 4px;
+}
+
+#skip-hint {
+  display: block;
+  margin: 6px 0 0;
+}
+
 .start-marker {
   width: 26px;
   height: 26px;
