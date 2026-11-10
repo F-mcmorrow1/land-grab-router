@@ -7,6 +7,7 @@
  */
 
 export interface RawTeam {
+  id?: number;
   name: string;
   /** `#rrggbb`. The site falls back to its own palette when missing or invalid. */
   colour?: string | null;
@@ -50,6 +51,8 @@ export interface RawLandGrab {
 }
 
 export interface Team {
+  /** The site's team ID, when the data includes it. */
+  id?: number;
   name: string;
   colour: string;
 }

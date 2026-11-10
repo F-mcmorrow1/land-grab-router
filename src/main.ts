@@ -7,8 +7,10 @@ import { toGpx } from "./gpx";
 import { haversine, MARGIN } from "./graph/graph";
 import { bboxAround, bboxContains, type BBox, type Profile } from "./graph/overpass";
 import { OUTCOME_COLOURS, PlannerMap, type HexProps } from "./map";
+import { crash } from "./crash";
 import { DEFAULT_WEIGHTS, assess, projectRun, valueTable, type HexPlan, type Outcome, type Weights } from "./scoring";
 import "./style.css";
+import { checkTeam } from "./team";
 import type { RouteMessage, WorkerRequest, WorkerResponse } from "./worker";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -127,9 +129,24 @@ const OUTCOME_LABELS: Record<Outcome, string> = {
 function loadData(raw: unknown, persist: boolean) {
   try {
     const ds = parseLandGrab(raw);
+    const verdict = checkTeam(ds);
+    if (!verdict.ok) {
+      // Another team's data: don't keep it, and take the planner down with it.
+      try {
+        localStorage.removeItem(DATA_KEY);
+      } catch {
+        /* ignore */
+      }
+      crash(verdict.theirTeam, () => {
+        worker.terminate();
+        pmap.map.remove();
+      });
+      return;
+    }
     state.ds = ds;
     state.game = replay(ds);
-    state.team = ds.yourTeam >= 0 ? ds.yourTeam : 0;
+    // Always plan for our team, whoever is holding the data.
+    state.team = verdict.team;
     state.route = null;
     state.selected.clear();
     if (persist) {
@@ -179,9 +196,7 @@ function renderTeams() {
   const ds = state.ds;
   const game = state.game;
   if (!ds || !game) return;
-  const select = $<HTMLSelectElement>("team");
-  select.innerHTML = ds.teams.map((t, i) => `<option value="${i}">${esc(t.name)}${i === ds.yourTeam ? " (your team)" : ""}</option>`).join("");
-  select.value = String(state.team);
+  $("team-name").innerHTML = `${swatch(ds.teams[state.team].colour)} ${esc(ds.teams[state.team].name)}`;
   $("team-field").hidden = false;
   const order = ds.teams.map((_, i) => i).sort((a, b) => game.held[b] - game.held[a]);
   $("standings").innerHTML = order
@@ -510,13 +525,6 @@ leader.checked = settings.weights.leaderFocus;
 leader.addEventListener("change", () => {
   settings.weights.leaderFocus = leader.checked;
   saveSettings();
-  refreshHexes();
-  renderRoute();
-});
-
-$<HTMLSelectElement>("team").addEventListener("change", (e) => {
-  state.team = parseInt((e.target as HTMLSelectElement).value, 10);
-  renderTeams();
   refreshHexes();
   renderRoute();
 });

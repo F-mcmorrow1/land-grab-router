@@ -17,11 +17,12 @@ function mulberry32(seed: number) {
  */
 export function makeDemo(center: { lat: number; lng: number }, seed = 7, resolution = 8): RawLandGrab {
   const rand = mulberry32(seed);
+  // Our team is first; the rivals are made up.
   const teams = [
-    { name: "Lime Lungs", colour: null },
-    { name: "Paper Planes", colour: null },
-    { name: "Steel Blues", colour: null },
-    { name: "Copper Tops", colour: null },
+    { id: 29, name: "Worst Pace Scenario", colour: "#f4f4ed" },
+    { id: 901, name: "Lime Lungs", colour: null },
+    { id: 902, name: "Steel Blues", colour: null },
+    { id: 903, name: "Copper Tops", colour: null },
   ];
   const regionOffsets = [
     [0, 0],

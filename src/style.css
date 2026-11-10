@@ -196,6 +196,11 @@ button.link {
   padding: 6px 8px;
 }
 
+#team-name {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .range {
   display: flex;
   gap: 10px;

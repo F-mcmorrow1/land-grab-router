@@ -44,7 +44,11 @@ export function parseLandGrab(input: unknown): Dataset {
 
   const yourTeam = typeof raw.your_team === "number" && raw.your_team < raw.teams.length ? raw.your_team : -1;
   const colours = assignColours(raw.teams.map((t) => t.colour), yourTeam);
-  const teams: Team[] = raw.teams.map((t, i) => ({ name: t.name || `Team ${i + 1}`, colour: colours[i] }));
+  const teams: Team[] = raw.teams.map((t, i) => ({
+    ...(typeof t.id === "number" ? { id: t.id } : {}),
+    name: t.name || `Team ${i + 1}`,
+    colour: colours[i],
+  }));
 
   const firstValid = raw.cells.find((c) => isValidCell(c));
   const resolution = firstValid ? getResolution(firstValid) : 8;

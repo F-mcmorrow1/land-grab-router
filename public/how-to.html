@@ -216,7 +216,7 @@
       <h2 id="before">Before you start</h2>
       <ul>
         <li><b>A desktop browser.</b> Chrome, Edge, Brave, Arc, Firefox or Safari on a Mac or PC. Phone browsers don't have developer tools; see <a href="#phone">using a phone</a> for the workaround.</li>
-        <li><b>You're signed in to strods.uk.</b> The data comes from your account, so a signed-out browser gets nothing.</li>
+        <li><b>You're signed in to strods.uk, on Worst Pace Scenario.</b> The data comes from your account, so a signed-out browser gets nothing, and the planner only opens for data from a Worst Pace Scenario member.</li>
         <li><b>The land grab is running.</b> The map ("The map who holds what") only appears on the overview page while the land-grab challenge is live. If you can't see the map there, there's no data to copy.</li>
       </ul>
 
@@ -319,7 +319,7 @@
             <tr><td><code>cells</code></td><td>Every hexagon crossed this week, as H3 IDs like <code>881f1d4887fffff</code>.</td></tr>
             <tr><td><code>activities</code></td><td>Each run, walk or ride: the athlete's first name, their team, when it started (minutes since Monday 00:00) and which <code>cells</code> it crossed, in order.</td></tr>
             <tr><td><code>regions</code></td><td>The named areas the site's map jumps between, with their bounds.</td></tr>
-            <tr><td><code>your_team</code>, <code>your_region</code></td><td>Which team and area are yours, so the planner can pick them by default.</td></tr>
+            <tr><td><code>your_team</code>, <code>your_region</code></td><td>Which team and area are yours. The planner checks <code>your_team</code> is Worst Pace Scenario and always plans for us.</td></tr>
             <tr><td><code>today</code></td><td>Day of the week, 0 for Monday.</td></tr>
           </tbody>
         </table>
@@ -334,7 +334,7 @@
         <li><b>Open the planner</b> at <a href="./">the Land Grab Router home page</a>.</li>
         <li><b>Paste.</b> Under <b>Game data</b>, open <b>Paste JSON</b>, paste into the box (<kbd>⌘</kbd> <kbd>V</kbd> / <kbd>Ctrl</kbd> <kbd>V</kbd>) and click <b>Load pasted data</b>.</li>
         <li><b>Check the status line.</b> It should read something like <i>4 teams · 312 hexagons held · 85 activities this week</i>, the standings appear, and the map jumps to your area.</li>
-        <li><b>Check your team.</b> It's picked from <code>your_team</code>. If it's wrong (or you want to plan as another team), change it in <b>Your team</b>.</li>
+        <li><b>Check it says "Planning for Worst Pace Scenario"</b> under the status line. The planner always plans for us.</li>
       </ol>
       <div class="note">
         <b>Prefer a file?</b> Paste what you copied into any plain-text editor and save it as <code>land-grab.json</code>, then use
@@ -418,7 +418,6 @@
       <details>
         <summary>My team or the standings look wrong</summary>
         <ul>
-          <li>Pick your team in <b>Your team</b>; it defaults to whatever the data says is yours.</li>
           <li>Copy fresh data: the standings are only as new as your copy.</li>
           <li>If the planner's map really disagrees with the site's for the same moment, the site's rules may have changed. Please report it.</li>
         </ul>

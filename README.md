@@ -12,6 +12,11 @@ uses, then finds either:
 
 Routes follow real streets and paths, and export as GPX for Garmin Connect or Strava.
 
+It only opens for data downloaded by a member of **Worst Pace Scenario** (team 29), and always
+plans for that team. Data from any other team gets a mock crash screen and isn't kept. The
+check is in `src/team.ts`. It runs in the browser and this repo is public, so it's a deterrent,
+not security.
+
 Not affiliated with strods.uk.
 
 ## Run it
