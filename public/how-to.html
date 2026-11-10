@@ -193,13 +193,14 @@
       <h1>Getting your <em>land-grab</em> data</h1>
       <p class="lede">
         The planner needs the same data the strods.uk map is drawn from. Your browser already downloads it whenever you open the
-        overview page; this guide shows how to find that download in the developer tools and copy it across. It takes about a minute
-        once you've done it before.
+        overview page. The <a href="#bookmark">one-click bookmark</a> is the quickest way to bring it across; the rest of this guide shows
+        how to find that download in the developer tools and copy it by hand, which works anywhere.
       </p>
 
       <nav class="toc" aria-label="Contents">
         <b>Contents</b>
         <ol>
+          <li><a href="#bookmark">The quick way: one-click bookmark</a></li>
           <li><a href="#before">Before you start</a></li>
           <li><a href="#what">What you're looking for</a></li>
           <li><a href="#steps">Step by step</a></li>
@@ -212,6 +213,41 @@
           <li><a href="#privacy">Privacy</a></li>
         </ol>
       </nav>
+
+      <h2 id="bookmark">The quick way: one-click bookmark</h2>
+      <p>
+        A bookmark called <b>Send to Land Grab Router</b> does all of this for you. Click it on strods.uk and the planner opens in a
+        new tab with your data already loaded. Set it up once; after that it's one click whenever you want fresh standings.
+      </p>
+      <h3>On a computer</h3>
+      <ol class="steps">
+        <li><b>Show your bookmarks bar.</b> <kbd>⇧</kbd> <kbd>⌘</kbd> <kbd>B</kbd> on a Mac or <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>B</kbd> on Windows in Chrome, Edge, Brave and Safari. In Firefox: <b>View → Toolbars → Bookmarks Toolbar</b>.</li>
+        <li><b>Drag the button onto it.</b> In <a href="./">the planner</a>, under <b>Game data</b>, drag the blue <b>★ Send to Land Grab Router</b> button onto the bookmarks bar.</li>
+        <li><b>Use it.</b> Open <a href="https://strods.uk/overview" target="_blank" rel="noreferrer">strods.uk/overview</a> signed in, wait for the page to load, and click the bookmark. The planner opens with your data.</li>
+      </ol>
+      <h3>On a phone</h3>
+      <p>Phones don't have a bookmarks bar to drag to, so you add the bookmark by hand once:</p>
+      <ol class="steps">
+        <li><b>Copy the bookmark.</b> Open the planner on your phone and tap <b>Copy it for a phone</b> under Game data.</li>
+        <li><b>Make a bookmark of any page</b> (iPhone Safari: Share → Add Bookmark; Android Chrome: ⋮ → ☆).</li>
+        <li><b>Edit that bookmark.</b> Name it <code>lgr</code> and replace its address with what you copied.</li>
+        <li><b>Use it.</b> On strods.uk/overview, open your bookmarks and tap <code>lgr</code> (iPhone). On Android Chrome, type <code>lgr</code> in the address bar and tap the bookmark in the suggestions; Chrome only runs bookmarks like this from there.</li>
+      </ol>
+      <div class="note">
+        <b>What it does.</b> The bookmark runs on the strods.uk page you're on, finds your club from the requests the page has already
+        made, fetches the same land-grab data with your existing login, and passes it straight to the planner tab. Nothing goes to any
+        other server.
+      </div>
+      <details>
+        <summary>If the bookmark doesn't work</summary>
+        <ul>
+          <li><b>"Couldn't find your club yet"</b>: wait for the Club Overview page to finish loading, then click again. After the first success it remembers your club.</li>
+          <li><b>"Blocked the new tab"</b>: allow pop-ups for strods.uk (the address bar shows a blocked pop-up icon), then click again.</li>
+          <li><b>"Signed out"</b>: sign in to strods.uk, then click again.</li>
+          <li><b>"Didn't hear back from strods.uk"</b>: you closed the strods.uk tab or it went to sleep. Go back to it and click the bookmark again.</li>
+          <li>If none of that helps, use the Network tab method below.</li>
+        </ul>
+      </details>
 
       <h2 id="before">Before you start</h2>
       <ul>

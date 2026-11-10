@@ -278,6 +278,24 @@ kbd {
   padding: 10px;
 }
 
+.oneclick {
+  margin: 4px 0 10px;
+}
+
+.bookmarklet {
+  display: inline-block;
+  text-decoration: none;
+  color: var(--bg);
+  background: var(--route);
+  border-color: var(--route);
+  font-weight: 600;
+  cursor: grab;
+}
+
+.bookmarklet::before {
+  content: "★ ";
+}
+
 .standings {
   list-style: none;
   padding: 0;

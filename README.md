@@ -42,6 +42,13 @@ npm run build    # production build in dist/
 
 ## Getting your live data
 
+**One click:** drag the **Send to Land Grab Router** button (under Game data) to your bookmarks
+bar, then click the bookmark on strods.uk/overview. It runs on strods.uk, so it can fetch the
+data with your login, and hands it to the planner tab with `postMessage`. The planner only accepts
+it from a strods.uk tab that opened it (`src/bookmarklet.ts`).
+
+**By hand:**
+
 The API (`https://api.strods.uk/clubs/{clubId}/land-grab`) authenticates with your
 browser's login cookie, so this app can't call it directly. Instead:
 

@@ -22,13 +22,22 @@
             <label class="btn">Load JSON file<input type="file" id="file" accept=".json,application/json" hidden /></label>
             <button id="demo" type="button">Try demo data</button>
           </div>
+          <div class="oneclick">
+            <a id="bookmarklet" class="btn bookmarklet" href="#" title="Drag me to your bookmarks bar">Send to Land Grab Router</a>
+            <p class="hint">
+              <b>One-click import:</b> drag this button to your bookmarks bar. Then, on
+              <a href="https://strods.uk/overview" target="_blank" rel="noreferrer">strods.uk/overview</a>, click the bookmark and your data
+              opens here. <button type="button" id="copy-bookmarklet" class="link">Copy it for a phone</button>
+              · <a href="how-to.html#bookmark">Help</a>
+            </p>
+          </div>
           <details>
             <summary>Paste JSON</summary>
             <textarea id="paste" rows="4" placeholder='{"teams": [...], "cells": [...], "activities": [...]}'></textarea>
             <button id="paste-load" type="button">Load pasted data</button>
           </details>
           <details>
-            <summary>How to get your live data</summary>
+            <summary>Or copy it by hand</summary>
             <ol class="howto">
               <li>Open <a href="https://strods.uk/overview" target="_blank" rel="noreferrer">strods.uk/overview</a> while signed in.</li>
               <li>Open DevTools (<kbd>⌥⌘I</kbd>), go to the <b>Network</b> tab and type <code>land-grab</code> in the filter. Reload if nothing shows.</li>

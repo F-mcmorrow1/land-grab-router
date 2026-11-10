@@ -1,4 +1,5 @@
 import { cellToBoundary, cellToLatLng, latLngToCell } from "h3-js";
+import { bookmarkletHref, receiveImport } from "./bookmarklet";
 import { makeDemo } from "./data/demo";
 import { parseLandGrab } from "./data/decode";
 import { lead, replay } from "./data/replay";
@@ -783,6 +784,51 @@ pmap.onUserPan(() => {
 
 if (import.meta.env.DEV) Object.assign(window, { __lgr: { state, live } });
 
+// ---------- one-click import from strods.uk ----------
+const plannerUrl = new URL(import.meta.env.BASE_URL, location.origin).href;
+const bookmark = $<HTMLAnchorElement>("bookmarklet");
+bookmark.href = bookmarkletHref(plannerUrl);
+bookmark.addEventListener("click", (e) => {
+  // Clicking it here would just send you to strods.uk; it's meant to be dragged.
+  e.preventDefault();
+  setDataStatus("Drag that button to your bookmarks bar, then click the bookmark on strods.uk/overview.");
+});
+$("copy-bookmarklet").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(bookmark.href);
+    setDataStatus("Copied. On your phone, bookmark any page, then edit the bookmark and paste this in as its address. The help page has the steps.");
+  } catch {
+    setDataStatus("Couldn't copy here. Long-press the button and choose Copy Link instead.", true);
+  }
+});
+
+function setDataStatus(text: string, isError = false) {
+  $("data-status").textContent = text;
+  $("data-status").classList.toggle("error", isError);
+}
+
+/** Opened by the bookmark: say we're ready, then take the data it sends. */
+function awaitImport() {
+  const opener = window.opener as Window | null;
+  if (location.hash !== "#import" || !opener || !document.getElementById("data-status")) return;
+  setDataStatus("Getting your data from strods.uk…");
+  const tidy = () => history.replaceState(null, "", location.pathname + location.search);
+  receiveImport(window, opener, {
+    onData(json) {
+      tidy();
+      loadData(json, true);
+    },
+    onError(message) {
+      tidy();
+      setDataStatus(`Couldn't get your data: ${message}.`, true);
+    },
+    onTimeout() {
+      tidy();
+      setDataStatus("Didn't hear back from strods.uk. Go back to strods.uk/overview and click the bookmark again.", true);
+    },
+  });
+}
+
 // ---------- start up ----------
 setPressed("view", "data-view", settings.view);
 setPressed("profile", "data-profile", settings.profile);
@@ -796,3 +842,4 @@ try {
 }
 if (saved) loadData(saved, false);
 else renderHex(null);
+awaitImport();
