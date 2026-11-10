@@ -84,9 +84,18 @@
           </div>
           <p class="row" id="selected-row"><span id="selected-count">0 hexagons picked</span><button type="button" id="clear-selected" class="link">Clear</button></p>
           <div class="row"><button type="button" id="locate" class="link">Start from my location</button></div>
-          <label class="field" id="budget-field">Distance budget
-            <span class="range"><input type="range" id="budget" min="2" max="30" step="0.5" value="8" /><output id="budget-out">8 km</output></span>
-          </label>
+          <div class="field" id="budget-field">
+            <label for="budget">Distance budget</label>
+            <div class="stepper">
+              <button type="button" id="budget-down" aria-label="1 km less">−</button>
+              <span class="stepper-box">
+                <input id="budget" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" value="8" aria-describedby="budget-hint" />
+                <span aria-hidden="true">km</span>
+              </span>
+              <button type="button" id="budget-up" aria-label="1 km more">+</button>
+            </div>
+            <span id="budget-hint" class="budget-hint" hidden>Type a distance between 1 and 50 km.</span>
+          </div>
           <label class="check"><input type="checkbox" id="closed" checked /> Finish where I start</label>
           <div class="seg small" id="profile" role="group" aria-label="Activity">
             <button type="button" data-profile="foot">Run / walk</button>

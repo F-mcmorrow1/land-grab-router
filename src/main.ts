@@ -1,5 +1,6 @@
 import { cellToBoundary, cellToLatLng, latLngToCell } from "h3-js";
 import { bookmarkletHref, receiveImport } from "./bookmarklet";
+import { clampKm, formatKm, MAX_KM, MIN_KM, parseKm, stepKm } from "./budget";
 import { makeDemo } from "./data/demo";
 import { parseLandGrab } from "./data/decode";
 import { lead, replay, runnerUp } from "./data/replay";
@@ -142,7 +143,7 @@ function renderSheetHead() {
     title.textContent = `${km.toFixed(km < 10 ? 2 : 1)} km · ${proj.points.toFixed(1)} points`;
     sub.textContent = progressText || `${taken} ${taken === 1 ? "hexagon" : "hexagons"} taken${proj.counts.steal ? `, ${proj.counts.steal} from rivals` : ""} · tap for details`;
   } else if (state.ds) {
-    title.textContent = settings.mode === "max" ? `${settings.budgetKm} km for most points` : `Through ${state.selected.size} ${state.selected.size === 1 ? "hexagon" : "hexagons"}`;
+    title.textContent = settings.mode === "max" ? `${formatKm(settings.budgetKm)} km for most points` : `Through ${state.selected.size} ${state.selected.size === 1 ? "hexagon" : "hexagons"}`;
     sub.textContent =
       progressText || (settings.mode === "visit" && !state.selected.size ? "Tap hexagons on the map to pick them" : "Tap a hexagon to look, or Plan");
   } else {
@@ -609,14 +610,52 @@ $("profile").addEventListener("click", (e) => {
 });
 
 const budget = $<HTMLInputElement>("budget");
-budget.value = String(settings.budgetKm);
-$("budget-out").textContent = `${settings.budgetKm} km`;
-budget.addEventListener("input", () => {
-  settings.budgetKm = parseFloat(budget.value);
-  $("budget-out").textContent = `${settings.budgetKm} km`;
+settings.budgetKm = clampKm(Number(settings.budgetKm) || 8);
+budget.value = formatKm(settings.budgetKm);
+
+function setBudget(km: number, rewrite: boolean) {
+  settings.budgetKm = clampKm(km);
+  if (rewrite) budget.value = formatKm(settings.budgetKm);
+  $<HTMLButtonElement>("budget-down").disabled = settings.budgetKm <= MIN_KM;
+  $<HTMLButtonElement>("budget-up").disabled = settings.budgetKm >= MAX_KM;
   saveSettings();
   renderSheetHead();
+}
+
+/** Whether the box holds a distance we can use as typed (in range, not just clamped to it). */
+function markBudget() {
+  const km = parseKm(budget.value);
+  const ok = km !== null && km >= MIN_KM && km <= MAX_KM;
+  budget.setAttribute("aria-invalid", String(!ok));
+  $("budget-hint").hidden = ok;
+  return km;
+}
+
+budget.addEventListener("input", () => {
+  // Take valid distances as they're typed, but leave the text alone until they're done.
+  const km = markBudget();
+  if (km !== null && km >= MIN_KM && km <= MAX_KM) setBudget(km, false);
 });
+budget.addEventListener("change", () => {
+  const km = parseKm(budget.value);
+  setBudget(km ?? settings.budgetKm, true);
+  markBudget();
+});
+budget.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    e.preventDefault();
+    setBudget(stepKm(parseKm(budget.value) ?? settings.budgetKm, e.key === "ArrowUp" ? 1 : -1), true);
+    markBudget();
+  } else if (e.key === "Enter") budget.blur();
+});
+budget.addEventListener("focus", () => budget.select());
+for (const [id, dir] of [["budget-down", -1], ["budget-up", 1]] as const) {
+  $(id).addEventListener("click", () => {
+    setBudget(stepKm(parseKm(budget.value) ?? settings.budgetKm, dir), true);
+    markBudget();
+  });
+}
+setBudget(settings.budgetKm, true);
 
 const closed = $<HTMLInputElement>("closed");
 closed.checked = settings.closed;
