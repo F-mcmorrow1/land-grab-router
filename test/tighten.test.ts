@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { joinPaths, pathCells } from "../src/graph/dijkstra";
-import { centreNode, distanceToEdge, nodesByCell } from "../src/graph/graph";
+import { centreNode, distanceToEdge, MAX_PIECE, nodesByCell } from "../src/graph/graph";
 import { maxScore } from "../src/solve/maxScore";
 import { legsFor, routeLength, tighten } from "../src/solve/tighten";
 import { visitAll } from "../src/solve/visitAll";
@@ -46,9 +46,9 @@ describe("tighten", () => {
     const target = g.cellOf[3 * 31 + 15];
     const r = visitAll({ g, start: centre, targets: [g.cellIds[target]], closed: false });
     expect(r.cells.has(target)).toBe(true);
-    // At least the 15 m margin, but no more than one 120 m block past it.
+    // At least the 15 m margin, but no more than one 20 m street piece past it.
     expect(depth(target, r.path.nodes)).toBeGreaterThanOrEqual(15);
-    expect(depth(target, r.path.nodes)).toBeLessThan(15 + 120 + 1);
+    expect(depth(target, r.path.nodes)).toBeLessThanOrEqual(15 + MAX_PIECE + 1);
   });
 
   it("never makes max-points routes worse than an untightened run would be", () => {

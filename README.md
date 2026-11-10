@@ -70,6 +70,9 @@ The data (including other athletes' first names) stays in your browser's local s
   double back would be worth more than this planner thinks.
 - **15 m GPS margin.** A hexagon only counts, and is only used as a target, where the
   route gets at least 15 m inside its edges. Change `MARGIN` in `src/graph/graph.ts`.
+- **Turning back mid-street.** Long streets are cut into 20 m pieces (`MAX_PIECE`), so a
+  quick trip into a hexagon turns back at most ~20 m past the margin instead of running
+  on to the next junction. Like a real U-turn, it can happen anywhere along a street.
 - **Pavements.** Pavements mapped as separate footways aren't in the tiles; the road next
   to them is, so routes run along the road.
 - **Street search area.** "Most points" looks within 5 km of the start (`MAX_RADIUS` in

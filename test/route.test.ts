@@ -1,7 +1,7 @@
 import * as h3 from "h3-js";
 import { describe, expect, it } from "vitest";
 import { dijkstra, pathCells } from "../src/graph/dijkstra";
-import { haversine } from "../src/graph/graph";
+import { haversine, MAX_PIECE } from "../src/graph/graph";
 import { grid } from "./grid";
 import { maxScore } from "../src/solve/maxScore";
 import { visitAll } from "../src/solve/visitAll";
@@ -42,9 +42,17 @@ describe("street graph", () => {
     expect(safe).toBeLessThan(g.n);
   });
 
+  it("cuts long streets so a route can turn back almost anywhere", () => {
+    let longest = 0;
+    for (let k = 0; k < g.to.length; k++) longest = Math.max(longest, g.w[k]);
+    expect(longest).toBeLessThanOrEqual(MAX_PIECE + 1e-6);
+    // The 120 m blocks were cut into 6 pieces each, keeping the original junctions first.
+    expect(g.n).toBe(31 * 31 + 2 * 31 * 30 * 5 + 2);
+  });
+
   it("never starts on the detached island", () => {
     expect(g.component[centre]).toBe(g.component[0]);
-    expect(g.componentSize[g.component[centre]]).toBe(31 * 31);
+    expect(g.componentSize[g.component[centre]]).toBe(g.n - 2); // all but the two island nodes
   });
 });
 

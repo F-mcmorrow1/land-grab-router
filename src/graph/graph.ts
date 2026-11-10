@@ -62,32 +62,53 @@ const SAMPLE_EVERY = 30;
 /** Default GPS safety margin, metres. */
 export const MARGIN = 15;
 
-export function buildGraph(osm: OsmData, resolution: number, margin = MARGIN): RoadGraph {
-  // Keep only nodes used by a way, and renumber them.
+/**
+ * Longest street piece, metres. Map data only has points at junctions and bends, and a route
+ * can only turn back at a point, so long straight streets are cut up: that way a quick trip into
+ * a hexagon turns back just inside it instead of running on to the next junction.
+ */
+export const MAX_PIECE = 20;
+
+export function buildGraph(osm: OsmData, resolution: number, margin = MARGIN, maxPiece = MAX_PIECE): RoadGraph {
+  // Keep only nodes used by a way, and renumber them (in way order, so ids stay predictable).
   const used = new Int32Array(osm.lat.length).fill(-1);
   let n = 0;
   for (const way of osm.ways) for (const v of way) if (used[v] === -1) used[v] = n++;
-  const lat = new Float64Array(n);
-  const lng = new Float64Array(n);
+  const latA: number[] = new Array(n);
+  const lngA: number[] = new Array(n);
   for (let v = 0; v < used.length; v++) {
     if (used[v] >= 0) {
-      lat[used[v]] = osm.lat[v];
-      lng[used[v]] = osm.lng[v];
+      latA[used[v]] = osm.lat[v];
+      lngA[used[v]] = osm.lng[v];
     }
   }
 
+  // Segments, with long ones cut into pieces; the new in-between nodes go after the originals.
   const us: number[] = [];
   const vs: number[] = [];
   for (const way of osm.ways) {
     for (let i = 0; i + 1 < way.length; i++) {
       const a = used[way[i]];
       const b = used[way[i + 1]];
-      if (a !== b) {
-        us.push(a);
-        vs.push(b);
+      if (a === b) continue;
+      const pieces = Math.max(1, Math.ceil(haversine(latA[a], lngA[a], latA[b], lngA[b]) / maxPiece));
+      let prev = a;
+      for (let k = 1; k < pieces; k++) {
+        const f = k / pieces;
+        const v = latA.length;
+        latA.push(latA[a] + (latA[b] - latA[a]) * f);
+        lngA.push(lngA[a] + (lngA[b] - lngA[a]) * f);
+        us.push(prev);
+        vs.push(v);
+        prev = v;
       }
+      us.push(prev);
+      vs.push(b);
     }
   }
+  n = latA.length;
+  const lat = Float64Array.from(latA);
+  const lng = Float64Array.from(lngA);
   const m = us.length;
 
   const cellIds: string[] = [];
