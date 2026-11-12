@@ -95,6 +95,7 @@
               <button type="button" id="budget-up" aria-label="1 km more">+</button>
             </div>
             <span id="budget-hint" class="budget-hint" hidden>Type a distance between 1 and 50 km.</span>
+            <span id="budget-min" class="hint" hidden></span>
           </div>
           <div class="field" id="count-field">
             <span>Routes to plan</span>
@@ -105,7 +106,19 @@
             </div>
             <span class="hint" id="count-hint">Plan several runs at once: each extra route goes for ground the others don't, so you can run them on different days.</span>
           </div>
-          <label class="check"><input type="checkbox" id="closed" checked /> Finish where I start</label>
+          <div class="field" id="finish-field">
+            <span>Finish</span>
+            <div class="seg small" id="finish" role="group" aria-label="Where the route finishes">
+              <button type="button" data-finish="start">Back to start</button>
+              <button type="button" data-finish="end">End point</button>
+              <button type="button" data-finish="anywhere">Anywhere</button>
+            </div>
+            <div class="seg small" id="place" role="group" aria-label="Map click does" hidden>
+              <button type="button" data-place="start">Click sets start</button>
+              <button type="button" data-place="end">Click sets end</button>
+            </div>
+            <span class="hint" id="end-hint" hidden>Click the map to set where you'll finish.</span>
+          </div>
           <div class="seg small" id="profile" role="group" aria-label="Activity">
             <button type="button" data-profile="foot">Run / walk</button>
             <button type="button" data-profile="bike">Ride</button>

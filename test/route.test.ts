@@ -117,4 +117,35 @@ describe("maxScore", () => {
     const r = maxScore({ g, start: centre, budget: 5000, closed: true, value: () => 0 });
     expect(r.path.length).toBe(0);
   });
+
+  describe("with an end point", () => {
+    const end = 5 * 31 + 25; // 10 blocks north-ish and 10 east: 2.4 km by street
+    const direct = dijkstra(g, centre, { target: end }).dist[end];
+
+    it("finishes at the end, within budget", () => {
+      const budget = direct + 3000;
+      const r = maxScore({ g, start: centre, budget, closed: true, end, value: () => 1 });
+      expect(r.path.nodes[0]).toBe(centre);
+      expect(r.path.nodes[r.path.nodes.length - 1]).toBe(end);
+      expect(r.path.length).toBeLessThanOrEqual(budget + 1e-6);
+      expect(r.score).toBe(pathCells(g, r.path).size);
+    });
+
+    it("spends extra distance on more hexagons than the direct route", () => {
+      const tight = maxScore({ g, start: centre, budget: direct + 1, closed: false, end, value: () => 1 });
+      const roomy = maxScore({ g, start: centre, budget: direct + 4000, closed: false, end, value: () => 1 });
+      expect(tight.path.nodes[tight.path.nodes.length - 1]).toBe(end);
+      expect(roomy.score).toBeGreaterThan(tight.score * 1.5);
+    });
+
+    it("still goes from start to end when nothing is worth points", () => {
+      const r = maxScore({ g, start: centre, budget: direct + 2000, closed: true, end, value: () => 0 });
+      expect(r.path.nodes[r.path.nodes.length - 1]).toBe(end);
+      expect(r.path.length).toBeCloseTo(direct, 3);
+    });
+
+    it("refuses a budget shorter than the way to the end", () => {
+      expect(() => maxScore({ g, start: centre, budget: direct - 100, closed: false, end, value: () => 1 })).toThrow(/too far/);
+    });
+  });
 });

@@ -96,6 +96,37 @@ export function bboxAround(lat: number, lng: number, radius: number): BBox {
   return [lng - dLng, lat - dLat, lng + dLng, lat + dLat];
 }
 
+/**
+ * Streets a route from `a` to `b` of up to `budget` metres could use: the box around the ellipse of
+ * points p with |ap| + |pb| ≤ budget, shrunk a little because streets are never straight (a loop,
+ * where a = b, gets 0.42 × budget each way). Each half-side is capped at `maxRadius` but always
+ * reaches both points with `pad` to spare. `capped` says whether the cap cut anything off.
+ */
+export function bboxForTrip(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number },
+  budget: number,
+  maxRadius: number,
+  pad = 500,
+): { bbox: BBox; capped: boolean } {
+  const lat = (a.lat + b.lat) / 2;
+  const lng = (a.lng + b.lng) / 2;
+  const mLat = 111_320;
+  const mLng = 111_320 * Math.cos((lat * Math.PI) / 180);
+  const dx = ((b.lng - a.lng) * mLng) / 2;
+  const dy = ((b.lat - a.lat) * mLat) / 2;
+  const c = Math.hypot(dx, dy);
+  const major = Math.max(budget / 2, c);
+  const minor = Math.sqrt(major * major - c * c);
+  const cos = c ? dx / c : 1;
+  const sin = c ? dy / c : 0;
+  const wantX = 0.84 * Math.hypot(major * cos, minor * sin);
+  const wantY = 0.84 * Math.hypot(major * sin, minor * cos);
+  const hx = Math.max(Math.min(wantX, maxRadius), Math.abs(dx) + pad);
+  const hy = Math.max(Math.min(wantY, maxRadius), Math.abs(dy) + pad);
+  return { bbox: [lng - hx / mLng, lat - hy / mLat, lng + hx / mLng, lat + hy / mLat], capped: hx < wantX - 1 || hy < wantY - 1 };
+}
+
 export function bboxContains(outer: BBox, inner: BBox): boolean {
   return outer[0] <= inner[0] && outer[1] <= inner[1] && outer[2] >= inner[2] && outer[3] >= inner[3];
 }

@@ -26,6 +26,16 @@ describe("several routes in one sweep", () => {
     expect(seen.size).toBeGreaterThan(routes[0].cells.size * 1.5);
   });
 
+  it("sends every route to the same end point", () => {
+    const end = 3 * 31 + 3;
+    const routes = planRoutes({ g, start: centre, budget: 6000, closed: true, end, values, count: 2 });
+    expect(routes).toHaveLength(2);
+    for (const r of routes) {
+      expect(r.path.nodes[r.path.nodes.length - 1]).toBe(end);
+      expect(r.path.length).toBeLessThanOrEqual(6000 + 1e-6);
+    }
+  });
+
   it("doesn't change the values it was given", () => {
     planRoutes({ g, start: centre, budget: 4000, closed: true, values, count: 2 });
     expect(values.every((v) => v === 1)).toBe(true);

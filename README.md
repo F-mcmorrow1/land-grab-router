@@ -9,6 +9,9 @@ uses, then finds either:
   hexagons of yours that are at risk, and progress towards ones you can't take yet.
 - **Through chosen hexagons**: the shortest street route that enters every hexagon you
   click.
+- **Finish** back at the start, anywhere, or (most points) at an **end point** you place on
+  the map. With an end point the distance can't go below the shortest street route there;
+  anything above it goes on detours for points along the way.
 - **Several routes at once** (most points): set "Routes to plan" to up to 5. Each later route
   goes for ground the earlier ones don't, so together they're a set of runs for different
   days. Tick which ones to show (points and standings are for the ticked ones together),
@@ -106,6 +109,7 @@ The data (including other athletes' first names) stays in your browser's local s
 - **Pavements.** Pavements mapped as separate footways aren't in the tiles; the road next
   to them is, so routes run along the road.
 - **Street search area.** "Most points" looks within 5 km of the start (`MAX_RADIUS` in
-  `src/main.ts`), which covers loops up to roughly 25–30 km.
+  `src/main.ts`), which covers loops up to roughly 25–30 km. With an end point it looks
+  around both ends instead, still at most 5 km from the middle in each direction.
 - **Standings move.** Data is a snapshot. Re-copy it before you head out if others have
   been running.

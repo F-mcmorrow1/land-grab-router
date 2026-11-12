@@ -710,6 +710,20 @@ footer {
   cursor: grab;
 }
 
+.end-marker {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 2px var(--bg);
+  cursor: grab;
+}
+
 .error {
   color: var(--danger);
 }

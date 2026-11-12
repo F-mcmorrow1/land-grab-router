@@ -2,7 +2,7 @@ import { dijkstra, extractPath, joinPaths, pathCells, type Path } from "../graph
 import { centreNode, nodesByCell, type RoadGraph } from "../graph/graph";
 import { distanceMatrix, type Progress, type RouteResult } from "./common";
 import { tighten, type Leg } from "./tighten";
-import { at, bestInsertion, orOpt, tourLength, twoOpt, type Matrix } from "./tour";
+import { at, bestInsertion, NO_TAIL, orOpt, tourLength, twoOpt, type Matrix } from "./tour";
 
 export interface MaxScoreInput {
   g: RoadGraph;
@@ -11,6 +11,8 @@ export interface MaxScoreInput {
   budget: number;
   /** Finish back at the start. */
   closed: boolean;
+  /** Finish at this street node instead (takes precedence over `closed`). */
+  end?: number;
   /** Points for crossing each hexagon once (index into g.cellIds). */
   value: (cell: number) => number;
   /** Hexagons considered as targets; more is slower but can find better routes. */
@@ -24,7 +26,7 @@ export interface MaxScoreResult extends RouteResult {
   score: number;
 }
 
-type Cand = { cell: number; rep: number; v: number; d: number };
+type Cand = { cell: number; rep: number; v: number; d: number; /** Extra distance over going straight to the end. */ extra: number };
 
 /** A route built from matrix stops, before tightening. */
 interface Draft {
@@ -57,34 +59,45 @@ interface Attempt {
  *    hexagon and drop any the rest of the route already covers (see tighten.ts).
  * 6. Spend the distance that frees up on short out-and-back spurs into neighbouring hexagons.
  *
+ * With an end point the route runs from the start to the end, and a hexagon is only a
+ * candidate if start → hexagon → end fits the budget; everything else works the same.
+ *
  * Greedy insertion tends to build compact blobs, so it is run from several starting
  * shapes (including loops pulled out towards each compass point); the two best are
  * tightened and filled, and the better result is kept.
  */
 export function maxScore(inp: MaxScoreInput): MaxScoreResult {
-  const { g, start, budget, closed, value, onProgress } = inp;
+  const { g, start, budget, end, value, onProgress } = inp;
+  const closed = inp.closed && end === undefined;
   const reach = closed ? budget / 2 : budget;
   const byCell = nodesByCell(g, g.component[start]);
   const startCell = g.cellOf[start];
 
   onProgress?.("Finding hexagons in range", 0.02);
   const fromStart = dijkstra(g, start, { maxDist: reach });
+  const fromEnd = end === undefined ? null : dijkstra(g, end, { maxDist: budget });
+  if (fromEnd && !(fromStart.dist[end as number] <= budget)) throw new Error("The end point is too far from the start for this distance, or can't be reached by street.");
+  const direct = fromEnd ? fromStart.dist[end as number] : 0;
   let cands: Cand[] = [];
   byCell.forEach((nodes, cell) => {
     if (cell === startCell) return;
     const v = value(cell);
     if (!(v > 0)) return;
-    const ok = nodes.filter((n) => fromStart.dist[n] <= reach && g.safe[n]);
+    const ok = nodes.filter((n) => fromStart.dist[n] <= reach && g.safe[n] && (!fromEnd || fromStart.dist[n] + fromEnd.dist[n] <= budget));
     if (!ok.length) return;
     const rep = centreNode(g, cell, ok);
-    cands.push({ cell, rep, v, d: fromStart.dist[rep] });
+    const extra = fromEnd ? fromStart.dist[rep] + fromEnd.dist[rep] - direct : 2 * fromStart.dist[rep];
+    cands.push({ cell, rep, v, d: fromStart.dist[rep], extra });
   });
-  const rank = (c: Cand) => c.v / (1 + c.d / (budget / 4));
+  const rank = (c: Cand) => (fromEnd ? c.v / (1 + c.extra / (budget / 2)) : c.v / (1 + c.d / (budget / 4)));
   cands.sort((a, b) => rank(b) - rank(a));
   cands = cands.slice(0, inp.maxCandidates ?? 150);
 
-  const nodeOf = (i: number) => (i === 0 ? start : cands[i - 1].rep);
-  const matrix = distanceMatrix(g, [start, ...cands.map((c) => c.rep)], (m, f) => onProgress?.(m, 0.05 + (f ?? 0) * 0.6), budget);
+  // Matrix indexes: 0 is the start, 1..n the candidates, and n + 1 the end point if there is one.
+  const nodeOf = (i: number) => (i === 0 ? start : i <= cands.length ? cands[i - 1].rep : (end as number));
+  const count = cands.length + 1;
+  const tail = end !== undefined ? count : closed ? 0 : NO_TAIL;
+  const matrix = distanceMatrix(g, [start, ...cands.map((c) => c.rep), ...(end === undefined ? [] : [end])], (m, f) => onProgress?.(m, 0.05 + (f ?? 0) * 0.6), budget);
 
   const legCache = new Map<number, { path: Path; cells: Set<number> }>();
   const leg = (a: number, b: number) => {
@@ -97,7 +110,7 @@ export function maxScore(inp: MaxScoreInput): MaxScoreResult {
     }
     return hit;
   };
-  const ctx: Ctx = { g, start, startCell, budget, closed, value, cands, matrix, leg, byCell, tighten: inp.tighten !== false };
+  const ctx: Ctx = { g, start, end, startCell, budget, tail, value, cands, matrix, leg, byCell, tighten: inp.tighten !== false };
 
   // Starting shapes: an empty tour with two levels of greed, plus loops seeded with a far
   // hexagon in each direction (a circular loop of length L reaches L/π from the start).
@@ -105,16 +118,18 @@ export function maxScore(inp: MaxScoreInput): MaxScoreResult {
     { seed: [], smoothing: 30 },
     { seed: [], smoothing: 400 },
   ];
+  // With an end point, aim for hexagons that make the whole route about 70% of the budget.
   const ideal = closed ? budget / Math.PI : budget * 0.6;
+  const distance = (i: number) => (end !== undefined ? Math.abs(at(matrix, 0, i) + at(matrix, i, tail) - budget * 0.7) : Math.abs(at(matrix, 0, i) - ideal));
   for (let q = 0; q < 4; q++) {
     let pick = -1;
     let pickErr = Infinity;
-    for (let i = 1; i < matrix.k; i++) {
+    for (let i = 1; i < count; i++) {
       const rep = cands[i - 1].rep;
       const bearing = Math.atan2(g.lat[rep] - g.lat[start], (g.lng[rep] - g.lng[start]) * Math.cos((g.lat[start] * Math.PI) / 180));
       const quadrant = Math.floor(((bearing + Math.PI * 2.25) % (Math.PI * 2)) / (Math.PI / 2));
-      const err = Math.abs(at(matrix, 0, i) - ideal);
-      if (quadrant === q && err < pickErr && tourLength(matrix, [0, i], closed) <= budget) {
+      const err = distance(i);
+      if (quadrant === q && err < pickErr && tourLength(matrix, [0, i], tail) <= budget) {
         pickErr = err;
         pick = i;
       }
@@ -149,9 +164,11 @@ export function maxScore(inp: MaxScoreInput): MaxScoreResult {
 interface Ctx {
   g: RoadGraph;
   start: number;
+  end: number | undefined;
   startCell: number;
   budget: number;
-  closed: boolean;
+  /** What follows the last stop: 0 (back to the start), the end point's matrix index, or NO_TAIL. */
+  tail: number;
   value: (cell: number) => number;
   cands: Cand[];
   matrix: Matrix;
@@ -161,7 +178,7 @@ interface Ctx {
 }
 
 function build(ctx: Ctx, seed: number[], smoothing: number): Draft {
-  const { startCell, budget, closed, value, cands, matrix, leg } = ctx;
+  const { startCell, budget, tail, value, cands, matrix, leg } = ctx;
   const score = (cells: Set<number>) => {
     let s = 0;
     cells.forEach((c) => (s += Math.max(0, value(c))));
@@ -169,7 +186,7 @@ function build(ctx: Ctx, seed: number[], smoothing: number): Draft {
   };
 
   let tour = [0, ...seed];
-  let len = tourLength(matrix, tour, closed);
+  let len = tourLength(matrix, tour, tail);
   let legs: { path: Path; cells: Set<number> }[] = [];
   const inTour = new Set<number>(seed);
   let covered = new Set<number>([startCell, ...seed.map((i) => cands[i - 1].cell)]);
@@ -177,9 +194,9 @@ function build(ctx: Ctx, seed: number[], smoothing: number): Draft {
   const insertGreedy = () => {
     for (;;) {
       let pick: { i: number; pos: number; delta: number; ratio: number } | null = null;
-      for (let i = 1; i < matrix.k; i++) {
+      for (let i = 1; i < cands.length + 1; i++) {
         if (inTour.has(i) || covered.has(cands[i - 1].cell)) continue;
-        const { pos, delta } = bestInsertion(matrix, tour, i, closed);
+        const { pos, delta } = bestInsertion(matrix, tour, i, tail);
         if (!Number.isFinite(delta) || len + delta > budget) continue;
         const ratio = cands[i - 1].v / (Math.max(delta, 0) + smoothing);
         if (!pick || ratio > pick.ratio) pick = { i, pos, delta, ratio };
@@ -193,7 +210,7 @@ function build(ctx: Ctx, seed: number[], smoothing: number): Draft {
   };
 
   const stitch = () => {
-    const stops = closed ? [...tour, 0] : tour;
+    const stops = tail !== NO_TAIL ? [...tour, tail] : tour;
     legs = [];
     for (let i = 0; i + 1 < stops.length; i++) legs.push(leg(stops[i], stops[i + 1]));
     covered = new Set([startCell]);
@@ -205,9 +222,9 @@ function build(ctx: Ctx, seed: number[], smoothing: number): Draft {
     const byValue = tour.slice(1).sort((x, y) => cands[x - 1].v - cands[y - 1].v);
     for (const t of byValue) {
       const p = tour.indexOf(t);
-      const hasNext = p + 1 < tour.length || closed;
+      const hasNext = p + 1 < tour.length || tail !== NO_TAIL;
       const a = tour[p - 1];
-      const b = p + 1 < tour.length ? tour[p + 1] : 0;
+      const b = p + 1 < tour.length ? tour[p + 1] : tail;
       const saved = at(matrix, a, t) + (hasNext ? at(matrix, t, b) - at(matrix, a, b) : 0);
       if (!(saved > 1)) continue;
       const replacement = hasNext ? leg(a, b) : null;
@@ -228,8 +245,8 @@ function build(ctx: Ctx, seed: number[], smoothing: number): Draft {
   let best = { score: -1, tour: [0], legs: [] as { path: Path; cells: Set<number> }[], covered: new Set<number>([startCell]) };
   for (let round = 0; round < 5; round++) {
     insertGreedy();
-    tour = twoOpt(matrix, orOpt(matrix, twoOpt(matrix, tour, closed), closed), closed);
-    len = tourLength(matrix, tour, closed);
+    tour = twoOpt(matrix, orOpt(matrix, twoOpt(matrix, tour, tail), tail), tail);
+    len = tourLength(matrix, tour, tail);
     stitch();
     prune();
     const s = score(covered);
@@ -242,7 +259,7 @@ function build(ctx: Ctx, seed: number[], smoothing: number): Draft {
 
 /** Tighten a draft, then spend the distance that frees up on spurs. */
 function finish(ctx: Ctx, draft: Draft): Attempt {
-  const { g, start, startCell, budget, closed, value, cands, byCell } = ctx;
+  const { g, start, end, startCell, budget, value, cands, byCell } = ctx;
   const score = (cells: Set<number>) => {
     let s = 0;
     cells.forEach((c) => (s += Math.max(0, value(c))));
@@ -252,8 +269,9 @@ function finish(ctx: Ctx, draft: Draft): Attempt {
     nodes: draft.tour.map((i) => (i === 0 ? start : cands[i - 1].rep)),
     cells: draft.tour.map((i) => (i === 0 ? startCell : cands[i - 1].cell)),
     pinned: draft.tour.map(() => false),
+    end,
   };
-  const tight = ctx.tighten ? tighten(g, stops, draft.legs, closed, byCell, score) : { legs: draft.legs };
+  const tight = ctx.tighten ? tighten(g, stops, draft.legs, ctx.tail === 0, byCell, score) : { legs: draft.legs };
   let path = tight.legs.length ? joinPaths(tight.legs.map((l) => l.path)) : { nodes: [start], slots: [], length: 0 };
   path = fillWithSpurs(g, path, pathCells(g, path), budget - path.length, value, byCell);
   const cells = pathCells(g, path);

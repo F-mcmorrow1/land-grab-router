@@ -2,7 +2,7 @@ import { dijkstra, extractPath, joinPaths, pathCells } from "../graph/dijkstra";
 import { centreNode, nodesByCell, safeNodes, type RoadGraph } from "../graph/graph";
 import { distanceMatrix, type Progress, type RouteResult } from "./common";
 import { legBetween, tighten, type Leg, type Stops } from "./tighten";
-import { nearestNeighbour, orOpt, twoOpt } from "./tour";
+import { NO_TAIL, nearestNeighbour, orOpt, twoOpt } from "./tour";
 
 export interface VisitAllInput {
   g: RoadGraph;
@@ -41,10 +41,11 @@ export function visitAll({ g, start, targets, closed, onProgress }: VisitAllInpu
   const reps = goals.map((c) => centreNode(g, c, byCell.get(c)!));
   const matrix = distanceMatrix(g, [start, ...reps], onProgress);
 
+  const tail = closed ? 0 : NO_TAIL;
   let tour = nearestNeighbour(matrix, reps.map((_, i) => i + 1));
-  tour = twoOpt(matrix, tour, closed);
-  tour = orOpt(matrix, tour, closed);
-  tour = twoOpt(matrix, tour, closed);
+  tour = twoOpt(matrix, tour, tail);
+  tour = orOpt(matrix, tour, tail);
+  tour = twoOpt(matrix, tour, tail);
   const order = tour.slice(1).map((i) => i - 1); // indexes into goals/reps
 
   onProgress?.("Joining up the route", 0.9);

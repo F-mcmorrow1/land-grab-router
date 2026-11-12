@@ -1,6 +1,6 @@
 import { cellToBoundary, cellToLatLng, latLngToCell } from "h3-js";
 import { bookmarkletHref, receiveImport } from "./bookmarklet";
-import { clampKm, formatKm, MAX_KM, MIN_KM, parseKm, stepKm } from "./budget";
+import { clampKm, floorKm, formatKm, MAX_KM, MIN_KM, parseKm, stepKm } from "./budget";
 import { makeDemo } from "./data/demo";
 import { crossedByMe, type SkipMine } from "./data/mine";
 import { parseLandGrab } from "./data/decode";
@@ -8,7 +8,7 @@ import { lead, replay, runnerUp } from "./data/replay";
 import type { Dataset, GameState } from "./data/types";
 import { toGpx } from "./gpx";
 import { haversine, MARGIN } from "./graph/graph";
-import { bboxAround, bboxContains, type BBox, type Profile } from "./graph/overpass";
+import { bboxAround, bboxContains, bboxForTrip, bboxUnion, type BBox, type Profile } from "./graph/overpass";
 import { depthInCell, distanceToRoute } from "./live";
 import { OUTCOME_COLOURS, PlannerMap, type HexProps, type LiveState } from "./map";
 import { crash } from "./crash";
@@ -25,10 +25,13 @@ const SETTINGS_KEY = "lgr-settings-v1";
 const MAX_RADIUS = 5000;
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/** Where a route finishes: back at the start, at a chosen end point (most points only), or wherever it ends up. */
+type Finish = "start" | "end" | "anywhere";
+
 interface Settings {
   mode: "max" | "visit";
   budgetKm: number;
-  closed: boolean;
+  finish: Finish;
   profile: Profile;
   weights: Weights;
   view: "teams" | "plan";
@@ -39,10 +42,13 @@ interface Settings {
 }
 
 function loadSettings(): Settings {
-  const base: Settings = { mode: "max", budgetKm: 8, closed: true, profile: "foot", weights: { ...DEFAULT_WEIGHTS }, view: "teams", skipMine: "week", routeCount: 1 };
+  const base: Settings = { mode: "max", budgetKm: 8, finish: "start", profile: "foot", weights: { ...DEFAULT_WEIGHTS }, view: "teams", skipMine: "week", routeCount: 1 };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
-    return { ...base, ...saved, weights: { ...base.weights, ...saved.weights } };
+    const merged: Settings = { ...base, ...saved, weights: { ...base.weights, ...saved.weights } };
+    // Older versions had a "Finish where I start" tick box.
+    if (saved.finish === undefined && saved.closed === false) merged.finish = "anywhere";
+    return merged;
   } catch {
     return base;
   }
@@ -63,6 +69,12 @@ const state = {
   team: 0,
   tool: "start" as "start" | "select",
   start: null as { lat: number; lng: number } | null,
+  /** Where the route should finish, when the finish is an end point. */
+  end: null as { lat: number; lng: number } | null,
+  /** Which marker a map click moves, when there is an end point to place. */
+  place: (settings.finish === "end" ? "end" : "start") as "start" | "end",
+  /** Shortest distance (km) that still reaches the end point; the budget can't go below it. */
+  floorKm: MIN_KM,
   selected: new Set<string>(),
   graph: null as { bbox: BBox; profile: Profile; resolution: number } | null,
   /** The route in focus: the one live location follows and the map frames. */
@@ -204,7 +216,7 @@ function renderSheetHead() {
     title.textContent = `${n > 1 ? `${n} routes · ` : ""}${km.toFixed(km < 10 ? 2 : 1)} km · ${proj.points.toFixed(1)} points`;
     sub.textContent = progressText || `${taken} ${taken === 1 ? "hexagon" : "hexagons"} taken${proj.counts.steal ? `, ${proj.counts.steal} from rivals` : ""} · tap for details`;
   } else if (state.ds) {
-    title.textContent = settings.mode === "max" ? `${formatKm(settings.budgetKm)} km for most points` : `Through ${state.selected.size} ${state.selected.size === 1 ? "hexagon" : "hexagons"}`;
+    title.textContent = settings.mode === "max" ? `${formatKm(settings.budgetKm)} km for most points${endWanted() ? " to your end" : ""}` : `Through ${state.selected.size} ${state.selected.size === 1 ? "hexagon" : "hexagons"}`;
     sub.textContent =
       progressText || (settings.mode === "visit" && !state.selected.size ? "Tap hexagons on the map to pick them" : "Tap a hexagon to look, or Plan");
   } else {
@@ -300,7 +312,10 @@ function loadData(raw: unknown, persist: boolean) {
     const home = ds.regions[ds.yourRegion] ?? ds.regions[0];
     const centre = home ? { lat: home.lat, lng: home.lng } : hexCentre(state.game);
     const farFromPlay = !state.start || !centre || haversine(state.start.lat, state.start.lng, centre.lat, centre.lng) > 20_000;
-    if (farFromPlay && centre) setStart(centre.lat, centre.lng);
+    if (farFromPlay && centre) {
+      clearEnd();
+      setStart(centre.lat, centre.lng);
+    }
     if (sheet.active) sheet.set("peek");
     if (home?.bounds) pmap.fitBounds(home.bounds, fitPadding());
     else if (centre) pmap.map.flyTo({ center: [centre.lng, centre.lat], zoom: 12 });
@@ -433,10 +448,16 @@ function renderHex(cell: string | null) {
 function showHexCard(cell: string, lat: number, lng: number) {
   const card = $("hex-card");
   card.innerHTML = `<button type="button" class="hex-card-close" aria-label="Close">×</button>${hexSummary(cell)}
-    <div class="actions"><button type="button" class="primary" data-act="start">Start here</button></div>`;
+    <div class="actions"><button type="button" class="primary" data-act="start">Start here</button>${
+      endWanted() ? '<button type="button" data-act="end">End here</button>' : ""
+    }</div>`;
   card.querySelector(".hex-card-close")!.addEventListener("click", hideHexCard);
   card.querySelector('[data-act="start"]')!.addEventListener("click", () => {
     setStart(lat, lng);
+    hideHexCard();
+  });
+  card.querySelector('[data-act="end"]')?.addEventListener("click", () => {
+    setEnd(lat, lng);
     hideHexCard();
   });
   card.hidden = false;
@@ -453,8 +474,26 @@ function hideHexCard() {
 function setStart(lat: number, lng: number) {
   state.start = { lat, lng };
   pmap.setStart(lat, lng);
+  void updateFloor();
 }
 pmap.onStartDragged((lat, lng) => setStart(lat, lng));
+
+/** Where the route finishes in the current mode: a chosen end point only makes sense for most points. */
+const finishNow = (): Finish => (settings.mode === "visit" && settings.finish === "end" ? "anywhere" : settings.finish);
+const endWanted = () => settings.mode === "max" && settings.finish === "end";
+
+function setEnd(lat: number, lng: number) {
+  state.end = { lat, lng };
+  state.place = "start";
+  pmap.setEnd({ lat, lng });
+  applyFinish();
+}
+function clearEnd() {
+  state.end = null;
+  pmap.setEnd(null);
+  void updateFloor();
+}
+pmap.onEndDragged((lat, lng) => setEnd(lat, lng));
 
 function renderSelected() {
   pmap.setSelected(state.selected);
@@ -472,6 +511,8 @@ pmap.map.on("click", (e) => {
     renderHex(cell);
   } else if (touchUI()) {
     showHexCard(cell, e.lngLat.lat, e.lngLat.lng);
+  } else if (endWanted() && state.place === "end") {
+    setEnd(e.lngLat.lat, e.lngLat.lng);
   } else {
     setStart(e.lngLat.lat, e.lngLat.lng);
   }
@@ -514,14 +555,23 @@ async function plan() {
   if (!ds || !state.game) return setProgress("Load game data first, or try the demo.", true);
   if (!state.start) return setProgress("Click the map to set a start point.", true);
   const start = state.start;
+  const finish = finishNow();
+  const end = endWanted() ? state.end : null;
+  if (endWanted() && !end) return setProgress("Click the map to set an end point, or pick another finish.", true);
   const budget = settings.budgetKm * 1000;
   let need: BBox;
   let note = "";
   if (settings.mode === "max") {
-    const wanted = budget * (settings.closed ? 0.42 : 0.8);
-    const radius = Math.min(wanted, MAX_RADIUS);
-    if (radius < wanted) note = `Searched streets within ${MAX_RADIUS / 1000} km of the start.`;
-    need = bboxAround(start.lat, start.lng, radius);
+    if (end) {
+      const trip = bboxForTrip(start, end, budget, MAX_RADIUS);
+      if (trip.capped) note = `Searched streets within ${MAX_RADIUS / 1000} km of the start and end.`;
+      need = trip.bbox;
+    } else {
+      const wanted = budget * (finish === "start" ? 0.42 : 0.8);
+      const radius = Math.min(wanted, MAX_RADIUS);
+      if (radius < wanted) note = `Searched streets within ${MAX_RADIUS / 1000} km of the start.`;
+      need = bboxAround(start.lat, start.lng, radius);
+    }
   } else {
     if (!state.selected.size) return setProgress("Pick at least one hexagon on the map.", true);
     need = bboxForVisit();
@@ -540,20 +590,37 @@ async function plan() {
       if (res.nodes === 0) throw new Error("No streets or paths found around the start point.");
       state.graph = { bbox: res.bbox, profile: settings.profile, resolution: ds.resolution };
     }
+    let budgetM = budget;
+    if (end) {
+      // The streets are loaded now, so the real shortest way to the end is known.
+      const m = await ask({ id: 0, type: "measure", start, end }, setProgress);
+      if (m.type === "error") throw new Error(m.message);
+      if (m.type === "measured") {
+        if (m.length === null) throw new Error("There's no street route between your start and end points.");
+        const least = floorKm(m.length);
+        if (least > MAX_KM) throw new Error(`Your end point is ${formatKm(m.length / 1000)} km from the start by street, further than the ${MAX_KM} km limit.`);
+        if (settings.budgetKm < least) {
+          setBudget(least, true);
+          budgetM = least * 1000;
+          note += ` Distance raised to ${formatKm(least)} km, the shortest way to your end point.`;
+        }
+      }
+    }
     const req: WorkerRequest =
       settings.mode === "max"
         ? {
             id: 0,
             type: "maxScore",
             start,
-            budget,
-            closed: settings.closed,
+            budget: budgetM,
+            closed: finish === "start",
+            end: end ?? undefined,
             // Hexagons you're skipping are worth nothing, so routes don't go out of their way for them.
             known: [...state.plans].map(([c, p]) => [c, state.mine.has(c) ? 0 : p.value]),
             unclaimed: settings.weights.claim,
             count: settings.routeCount,
           }
-        : { id: 0, type: "visitAll", start, targets: [...state.selected], closed: settings.closed };
+        : { id: 0, type: "visitAll", start, targets: [...state.selected], closed: finish === "start" };
     const res = await ask(req, setProgress);
     if (res.type === "error") throw new Error(res.message);
     const routes = res.type === "routes" ? res.routes : res.type === "route" ? [res.route] : null;
@@ -561,6 +628,7 @@ async function plan() {
     $("r-note").dataset.note =
       note + (settings.mode === "max" && routes.length < settings.routeCount ? ` Only ${routes.length} of ${settings.routeCount} routes found ground worth a run.` : "");
     setRoutes(routes);
+    void updateFloor(); // the streets are loaded now, so the end point's distance is exact
     if (sheet.active) sheet.set("peek");
     pmap.fitCoords(routes.flatMap((r) => r.coords), 14, fitPadding());
     setProgress("");
@@ -721,6 +789,7 @@ function applyMode() {
     ? "Click hexagons on the map to pick them. The planner finds the shortest street route that enters every one."
     : "Finds the route that wins the most points within your distance. Blank, unclaimed ground counts too.";
   pmap.map.getCanvas().style.cursor = visit && state.tool === "select" ? "pointer" : "crosshair";
+  applyFinish();
   renderSheetHead();
 }
 
@@ -752,6 +821,7 @@ $("profile").addEventListener("click", (e) => {
   settings.profile = p;
   saveSettings();
   setPressed("profile", "data-profile", p);
+  void updateFloor();
 });
 
 // ---------- hexagons you've already crossed ----------
@@ -796,9 +866,9 @@ settings.budgetKm = clampKm(Number(settings.budgetKm) || 8);
 budget.value = formatKm(settings.budgetKm);
 
 function setBudget(km: number, rewrite: boolean) {
-  settings.budgetKm = clampKm(km);
+  settings.budgetKm = clampKm(km, state.floorKm);
   if (rewrite) budget.value = formatKm(settings.budgetKm);
-  $<HTMLButtonElement>("budget-down").disabled = settings.budgetKm <= MIN_KM;
+  $<HTMLButtonElement>("budget-down").disabled = settings.budgetKm <= state.floorKm;
   $<HTMLButtonElement>("budget-up").disabled = settings.budgetKm >= MAX_KM;
   saveSettings();
   renderSheetHead();
@@ -807,8 +877,9 @@ function setBudget(km: number, rewrite: boolean) {
 /** Whether the box holds a distance we can use as typed (in range, not just clamped to it). */
 function markBudget() {
   const km = parseKm(budget.value);
-  const ok = km !== null && km >= MIN_KM && km <= MAX_KM;
+  const ok = km !== null && km >= state.floorKm && km <= MAX_KM;
   budget.setAttribute("aria-invalid", String(!ok));
+  $("budget-hint").textContent = `Type a distance between ${formatKm(state.floorKm)} and ${MAX_KM} km.`;
   $("budget-hint").hidden = ok;
   return km;
 }
@@ -816,7 +887,7 @@ function markBudget() {
 budget.addEventListener("input", () => {
   // Take valid distances as they're typed, but leave the text alone until they're done.
   const km = markBudget();
-  if (km !== null && km >= MIN_KM && km <= MAX_KM) setBudget(km, false);
+  if (km !== null && km >= state.floorKm && km <= MAX_KM) setBudget(km, false);
 });
 budget.addEventListener("change", () => {
   const km = parseKm(budget.value);
@@ -826,24 +897,80 @@ budget.addEventListener("change", () => {
 budget.addEventListener("keydown", (e) => {
   if (e.key === "ArrowUp" || e.key === "ArrowDown") {
     e.preventDefault();
-    setBudget(stepKm(parseKm(budget.value) ?? settings.budgetKm, e.key === "ArrowUp" ? 1 : -1), true);
+    setBudget(stepKm(parseKm(budget.value) ?? settings.budgetKm, e.key === "ArrowUp" ? 1 : -1, state.floorKm), true);
     markBudget();
   } else if (e.key === "Enter") budget.blur();
 });
 budget.addEventListener("focus", () => budget.select());
 for (const [id, dir] of [["budget-down", -1], ["budget-up", 1]] as const) {
   $(id).addEventListener("click", () => {
-    setBudget(stepKm(parseKm(budget.value) ?? settings.budgetKm, dir), true);
+    setBudget(stepKm(parseKm(budget.value) ?? settings.budgetKm, dir, state.floorKm), true);
     markBudget();
   });
 }
 setBudget(settings.budgetKm, true);
 
-const closed = $<HTMLInputElement>("closed");
-closed.checked = settings.closed;
-closed.addEventListener("change", () => {
-  settings.closed = closed.checked;
+// ---------- where the route finishes ----------
+function setFloor(km: number, note: string, bad = false) {
+  state.floorKm = km;
+  const el = $("budget-min");
+  el.textContent = note;
+  el.hidden = !note;
+  el.classList.toggle("error", bad);
+  setBudget(settings.budgetKm, true);
+  markBudget();
+}
+
+let floorToken = 0;
+/** Works out the least distance that reaches the end point, and holds the budget above it. */
+async function updateFloor() {
+  const token = ++floorToken;
+  const s = state.start;
+  const e = state.end;
+  if (!endWanted() || !s || !e) return setFloor(MIN_KM, "");
+  const straight = haversine(s.lat, s.lng, e.lat, e.lng);
+  const rough = floorKm(straight);
+  if (rough > MAX_KM) return setFloor(MAX_KM, `Your end point is ${formatKm(straight / 1000)} km from the start in a straight line, further than the ${MAX_KM} km limit.`, true);
+  setFloor(rough, `At least ${formatKm(rough)} km to reach your end point (in a straight line; checked against real streets when you plan).`);
+  // If the streets between the two points are already loaded, the exact figure is cheap.
+  const g = state.graph;
+  if (!g || g.profile !== settings.profile || !bboxContains(g.bbox, bboxUnion(bboxAround(s.lat, s.lng, 300), bboxAround(e.lat, e.lng, 300)))) return;
+  const res = await ask({ id: 0, type: "measure", start: s, end: e }, () => {});
+  if (token !== floorToken || res.type !== "measured") return;
+  if (res.length === null) return setFloor(rough, "There's no street route between your start and end points.", true);
+  const exact = floorKm(res.length);
+  if (exact > MAX_KM) return setFloor(MAX_KM, `Your end point is ${formatKm(res.length / 1000)} km from the start by street, further than the ${MAX_KM} km limit.`, true);
+  setFloor(exact, `At least ${formatKm(exact)} km: the shortest street route to your end point.`);
+}
+
+/** Syncs the finish and marker controls with the settings and the mode. */
+function applyFinish() {
+  const visit = settings.mode === "visit";
+  setPressed("finish", "data-finish", finishNow());
+  $("finish").querySelector<HTMLElement>('[data-finish="end"]')!.hidden = visit;
+  const placing = endWanted();
+  // Touch screens pick start or end from the hexagon card instead.
+  $("place").hidden = !placing || touchUI();
+  setPressed("place", "data-place", state.place);
+  $("end-hint").textContent = touchUI() ? "Tap the map where you'll finish, then End here." : "Click the map to set where you'll finish.";
+  $("end-hint").hidden = !placing || !!state.end;
+  pmap.setEnd(placing ? state.end : null);
+  void updateFloor();
+}
+
+$("finish").addEventListener("click", (e) => {
+  const f = (e.target as HTMLElement).closest("button")?.dataset.finish as Finish | undefined;
+  if (!f) return;
+  settings.finish = f;
+  if (f === "end" && !state.end) state.place = "end";
   saveSettings();
+  applyFinish();
+});
+$("place").addEventListener("click", (e) => {
+  const p = (e.target as HTMLElement).closest("button")?.dataset.place as "start" | "end" | undefined;
+  if (!p) return;
+  state.place = p;
+  applyFinish();
 });
 
 document.querySelectorAll<HTMLInputElement>("#weights input[data-w]").forEach((input) => {

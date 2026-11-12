@@ -17,6 +17,8 @@ export interface Stops {
   cells: number[];
   /** Stops that must stay even when the rest of the route seems to cover them. */
   pinned: boolean[];
+  /** A street node the route finishes at, after the last stop (it has a leg of its own). Overrides `closed`. */
+  end?: number;
 }
 
 export const reversePath = (p: Path): Path => ({ nodes: [...p.nodes].reverse(), slots: [...p.slots].reverse(), length: p.length });
@@ -70,7 +72,7 @@ export function tighten(
   const cells = [...stops.cells];
   const pinned = [...stops.pinned];
   legs = [...legs];
-  const nextOf = (p: number) => (p + 1 < nodes.length ? nodes[p + 1] : closed ? nodes[0] : -1);
+  const nextOf = (p: number) => (p + 1 < nodes.length ? nodes[p + 1] : stops.end ?? (closed ? nodes[0] : -1));
   let q = quality(union(legs, new Set(), []));
 
   for (let pass = 0; pass < passes; pass++) {
@@ -124,5 +126,5 @@ export function tighten(
 
     if (!changed) break;
   }
-  return { stops: { nodes, cells, pinned }, legs };
+  return { stops: { nodes, cells, pinned, end: stops.end }, legs };
 }
