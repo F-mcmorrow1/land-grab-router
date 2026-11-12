@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampKm, formatKm, parseKm, stepKm } from "../src/budget";
+import { clampKm, floorKm, formatKm, parseKm, stepKm } from "../src/budget";
 
 describe("distance budget box", () => {
   it("reads distances however they're typed", () => {
@@ -26,6 +26,19 @@ describe("distance budget box", () => {
     expect(clampKm(0.2)).toBe(1);
     expect(clampKm(80)).toBe(50);
     expect(clampKm(21.0975)).toBe(21.1);
+  });
+
+  it("never steps below the way to the end point", () => {
+    expect(clampKm(3, 4.3)).toBe(4.3);
+    expect(stepKm(4.8, -1, 4.3)).toBe(4.3);
+    expect(stepKm(7.3, -1, 4.3)).toBe(7);
+    expect(stepKm(4.3, 1, 4.3)).toBe(5);
+  });
+
+  it("rounds the way to the end point up, so the budget always covers it", () => {
+    expect(floorKm(4210)).toBe(4.3);
+    expect(floorKm(4200)).toBe(4.2);
+    expect(floorKm(300)).toBe(1);
   });
 
   it("shows distances without trailing zeros", () => {

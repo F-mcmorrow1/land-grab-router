@@ -119,6 +119,7 @@ export class PlannerMap {
   readonly map: MLMap;
   readonly ready: Promise<void>;
   private startMarker: Marker;
+  private endMarker: Marker;
   private resolution = 8;
   private teamColours: string[] = [];
   private view: "teams" | "plan" = "teams";
@@ -164,6 +165,12 @@ export class PlannerMap {
     el.title = "Start (drag to move)";
     el.textContent = "S";
     this.startMarker = new Marker({ element: el, draggable: true });
+
+    const endEl = document.createElement("div");
+    endEl.className = "end-marker";
+    endEl.title = "End (drag to move)";
+    endEl.textContent = "E";
+    this.endMarker = new Marker({ element: endEl, draggable: true });
 
     // Overlays go on as soon as the style is parsed (not after the first full render, which
     // never comes in a background tab), and anything set before then is applied here.
@@ -406,6 +413,19 @@ export class PlannerMap {
 
   setStart(lat: number, lng: number) {
     this.startMarker.setLngLat([lng, lat]).addTo(this.map);
+  }
+
+  /** Shows the end marker, or takes it off the map when given null. */
+  setEnd(at: { lat: number; lng: number } | null) {
+    if (at) this.endMarker.setLngLat([at.lng, at.lat]).addTo(this.map);
+    else this.endMarker.remove();
+  }
+
+  onEndDragged(cb: (lat: number, lng: number) => void) {
+    this.endMarker.on("dragend", () => {
+      const p = this.endMarker.getLngLat();
+      cb(p.lat, p.lng);
+    });
   }
 
   onStartDragged(cb: (lat: number, lng: number) => void) {

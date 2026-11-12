@@ -1,4 +1,5 @@
 /// <reference lib="webworker" />
+import { dijkstra } from "./graph/dijkstra";
 import { buildGraph, nearestNode, type RoadGraph } from "./graph/graph";
 import { fetchOsm, type BBox, type Profile } from "./graph/overpass";
 import { fetchStreetTiles } from "./graph/tiles";
@@ -15,12 +16,16 @@ export type WorkerRequest =
       start: LatLng;
       budget: number;
       closed: boolean;
+      /** Finish here instead (overrides `closed`). */
+      end?: LatLng;
       /** Points for hexagons already in play; anything else is worth `unclaimed`. */
       known: [string, number][];
       unclaimed: number;
       /** How many routes to plan; each later one goes for hexagons the earlier ones don't. */
       count?: number;
-    };
+    }
+  /** Shortest street distance from start to end, on the loaded streets. */
+  | { id: number; type: "measure"; start: LatLng; end: LatLng };
 
 export interface LatLng {
   lat: number;
@@ -40,6 +45,8 @@ export type WorkerResponse =
   | { id: number; type: "loaded"; nodes: number; segments: number; bbox: BBox }
   | { id: number; type: "route"; route: RouteMessage }
   | { id: number; type: "routes"; routes: RouteMessage[] }
+  /** Metres, or null if the end can't be reached from the start. */
+  | { id: number; type: "measured"; length: number | null }
   | { id: number; type: "error"; message: string };
 
 let graph: RoadGraph | null = null;
@@ -79,14 +86,19 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     if (!graph || graph.n === 0) throw new Error("No street map loaded for this area.");
     const g = graph;
     const start = nearestNode(g, req.start.lat, req.start.lng);
-    if (req.type === "visitAll") {
+    if (req.type === "measure") {
+      const end = nearestNode(g, req.end.lat, req.end.lng);
+      const d = dijkstra(g, start, { target: end }).dist[end];
+      post({ id: req.id, type: "measured", length: Number.isFinite(d) ? d : null });
+    } else if (req.type === "visitAll") {
       const r = visitAll({ g, start, targets: req.targets, closed: req.closed, onProgress: progress });
       post({ id: req.id, type: "route", route: toMessage(g, r) });
     } else {
       const known = new Map(req.known);
       const values = new Float64Array(g.cellIds.length);
       g.cellIds.forEach((c, i) => (values[i] = known.get(c) ?? req.unclaimed));
-      const routes = planRoutes({ g, start, budget: req.budget, closed: req.closed, values, count: req.count ?? 1, onProgress: progress });
+      const end = req.end ? nearestNode(g, req.end.lat, req.end.lng) : undefined;
+      const routes = planRoutes({ g, start, budget: req.budget, closed: req.closed, end, values, count: req.count ?? 1, onProgress: progress });
       post({ id: req.id, type: "routes", routes: routes.map((r) => toMessage(g, r)) });
     }
   } catch (e) {
